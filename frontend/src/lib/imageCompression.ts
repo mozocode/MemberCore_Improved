@@ -1,98 +1,70 @@
 /**
- * Client-side image compression for uploads (e.g. profile photos).
- * Resizes to max dimensions and compresses as JPEG so payload fits in Firestore.
+ * Compress cover/banner images for events.
+ * Preserves aspect ratio; scales so the longest side is at most maxSize.
+ * PNG transparency preserved; JPEGs compressed with quality.
+ *
+ * @param file - The uploaded image file
+ * @param maxSize - Maximum dimension in pixels (default: 1200)
+ * @param quality - JPEG quality 0–1 (default: 0.8)
+ * @returns Base64 encoded compressed image
  */
-
-const DEFAULT_MAX_SIZE = 512
-const TARGET_MAX_BYTES = 380_000 // ~380 KB base64 so under Firestore doc limit
-const QUALITY_STEPS = [0.85, 0.7, 0.55, 0.4, 0.3]
-
-export interface CompressImageOptions {
-  /** Max width or height in pixels (default 512) */
-  maxSize?: number
-  /** Target max size in bytes for output base64 (default 380 KB) */
-  maxBytes?: number
-}
-
-function canvasToDataUrl(canvas: HTMLCanvasElement, quality: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          reject(new Error('Failed to compress image'))
-          return
-        }
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result as string)
-        reader.onerror = () => reject(new Error('Failed to read blob'))
-        reader.readAsDataURL(blob)
-      },
-      'image/jpeg',
-      quality
-    )
-  })
-}
-
-/**
- * Compress an image file: resize and re-encode as JPEG, then return as data URL.
- * Accepts any image type; output is always JPEG for smaller size.
- * Reduces quality as needed so result stays under maxBytes.
- */
-export function compressImageFile(
+export function compressCoverImage(
   file: File,
-  options: CompressImageOptions = {}
+  maxSize: number = 1200,
+  quality: number = 0.8
 ): Promise<string> {
-  const maxSize = options.maxSize ?? DEFAULT_MAX_SIZE
-  const maxBytes = options.maxBytes ?? TARGET_MAX_BYTES
-
   return new Promise((resolve, reject) => {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
+    if (!file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      reader.readAsDataURL(file)
+      return
+    }
 
-    img.onload = async () => {
-      URL.revokeObjectURL(url)
-      const w = img.naturalWidth
-      const h = img.naturalHeight
-      const scale = Math.min(1, maxSize / Math.max(w, h))
-      const width = Math.round(w * scale)
-      const height = Math.round(h * scale)
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        let width = img.width
+        let height = img.height
 
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        reject(new Error('Could not get canvas context'))
-        return
-      }
-      ctx.drawImage(img, 0, 0, width, height)
-
-      for (const quality of QUALITY_STEPS) {
-        try {
-          const dataUrl = await canvasToDataUrl(canvas, quality)
-          if (dataUrl.length <= maxBytes) {
-            resolve(dataUrl)
-            return
+        if (width > height) {
+          if (width > maxSize) {
+            height = Math.round((height * maxSize) / width)
+            width = maxSize
           }
-        } catch (e) {
-          reject(e)
+        } else {
+          if (height > maxSize) {
+            width = Math.round((width * maxSize) / height)
+            height = maxSize
+          }
+        }
+
+        canvas.width = width
+        canvas.height = height
+
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Canvas not available'))
           return
         }
-      }
-      // Last attempt at lowest quality
-      try {
-        const dataUrl = await canvasToDataUrl(canvas, 0.25)
-        resolve(dataUrl)
-      } catch (e) {
-        reject(e)
-      }
-    }
+        ctx.drawImage(img, 0, 0, width, height)
 
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      reject(new Error('Failed to load image'))
-    }
+        const outputFormat = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+        const outputQuality = file.type === 'image/png' ? 1 : quality
 
-    img.src = url
+        try {
+          resolve(canvas.toDataURL(outputFormat, outputQuality))
+        } catch (err) {
+          reject(err)
+        }
+      }
+      img.onerror = () => reject(new Error('Failed to load image'))
+      img.src = (e.target?.result as string) ?? ''
+    }
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsDataURL(file)
   })
 }

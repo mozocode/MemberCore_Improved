@@ -257,10 +257,6 @@ export function CreateEventModal({ orgId, onClose, onCreated, eventId, initialEv
       return
     }
     if (isPublicDirectory) {
-      if (!eventType.trim()) {
-        setError('Event type is required for public directory events')
-        return
-      }
       if (!location.trim()) {
         setError('Location is required for public directory events')
         return
@@ -529,7 +525,7 @@ export function CreateEventModal({ orgId, onClose, onCreated, eventId, initialEv
             <p className="text-xs text-zinc-500">Public events appear in the directory and can be discovered by anyone.</p>
             {isPublicDirectory && (
               <div>
-                <Label htmlFor="eventType" className="text-zinc-300">Event type *</Label>
+                <Label htmlFor="eventType" className="text-zinc-300">Event type</Label>
                 <select
                   id="eventType"
                   value={eventType}

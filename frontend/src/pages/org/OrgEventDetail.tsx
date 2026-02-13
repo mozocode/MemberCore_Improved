@@ -53,6 +53,8 @@ export function OrgEventDetail() {
   const [myRole, setMyRole] = useState<string | null>(null)
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [coverImageLoaded, setCoverImageLoaded] = useState(false)
+  const [coverImageError, setCoverImageError] = useState(false)
 
   const fetchEvent = () => {
     if (!orgId || !eventId) return
@@ -68,6 +70,11 @@ export function OrgEventDetail() {
     if (!orgId || !eventId) return
     fetchEvent()
   }, [orgId, eventId])
+
+  useEffect(() => {
+    setCoverImageLoaded(false)
+    setCoverImageError(false)
+  }, [eventId])
 
   useEffect(() => {
     if (!orgId) return
@@ -211,12 +218,23 @@ export function OrgEventDetail() {
         )}
       </div>
 
-      {event.cover_image && (
-        <img
-          src={event.cover_image}
-          alt=""
-          className="w-full h-48 object-cover rounded-xl mb-4"
-        />
+      {event.cover_image && !coverImageError && (
+        <div
+          className="rounded-xl overflow-hidden mb-6 bg-zinc-900 flex items-center justify-center min-h-[200px]"
+          data-testid="event-cover-container"
+        >
+          {!coverImageLoaded && (
+            <div className="animate-pulse bg-zinc-800 w-full min-h-[200px] rounded-xl" aria-hidden />
+          )}
+          <img
+            src={event.cover_image}
+            alt={event.title}
+            className={`max-w-full max-h-[70vh] w-auto h-auto object-contain ${!coverImageLoaded ? 'hidden' : ''}`}
+            onLoad={() => setCoverImageLoaded(true)}
+            onError={() => setCoverImageError(true)}
+            data-testid="event-cover-image"
+          />
+        </div>
       )}
 
       <h1 className="text-2xl font-bold text-white mb-2">{event.title}</h1>
