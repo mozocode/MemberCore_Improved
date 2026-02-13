@@ -1,0 +1,9 @@
+{
+  "name": "membercore",
+  "private": true,
+  "description": "MemberCore monorepo – run deploy from here so Firebase uses this folder's .firebaserc (membercore-f0b3f)",
+  "scripts": {
+    "deploy:hosting": "firebase use membercore-f0b3f && firebase deploy --only hosting",
+    "firebase:use": "firebase use membercore-f0b3f"
+  }
+}
