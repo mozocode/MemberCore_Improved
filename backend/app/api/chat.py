@@ -46,8 +46,11 @@ def _ensure_general_channel(db, org_id: str):
             "organization_id": org_id,
             "name": "general",
             "is_restricted": False,
+            "is_default": True,
             "visibility": "everyone",
             "allowed_members": [],
+            "allowed_roles": [],
+            "created_by": None,
             "created_at": now,
         })
         return ch_id
@@ -127,25 +130,33 @@ def post_to_general_chat(
 
 
 def _can_see_channel(db, channel: dict, user_id: str, org_id: str, member_role: str) -> bool:
-    """Check if user can see this channel."""
-    if channel.get("visibility") == "everyone":
-        if channel.get("is_restricted") and member_role == "restricted":
-            return False
+    """Check if user can see this channel.
+    - public/everyone: all members can see
+    - restricted: creator, admin/owner, role in allowed_roles, or user_id in allowed_members
+    """
+    vis = channel.get("visibility") or "everyone"
+    if vis in ("public", "everyone"):
+        if channel.get("is_restricted"):
+            return (
+                channel.get("created_by") == user_id
+                or member_role in ("owner", "admin")
+                or member_role in (channel.get("allowed_roles") or [])
+                or user_id in (channel.get("allowed_members") or [])
+            )
         return True
-    # visibility == "select"
+    if vis == "restricted":
+        if channel.get("created_by") == user_id:
+            return True
+        if member_role in ("owner", "admin"):
+            return True
+        if member_role in (channel.get("allowed_roles") or []):
+            return True
+        return user_id in (channel.get("allowed_members") or [])
+    # legacy "select" or private: only allowed_members (user IDs)
     allowed = channel.get("allowed_members") or []
     if not allowed:
         return member_role in ("owner", "admin")
-    # Resolve member id from user_id
-    member_docs = list(
-        db.collection("members")
-        .where("user_id", "==", user_id)
-        .where("organization_id", "==", org_id)
-        .limit(1)
-        .get()
-    )
-    member_id = member_docs[0].id if member_docs else None
-    return member_id in allowed
+    return user_id in allowed
 
 
 # --- HTTP API ---
@@ -153,16 +164,19 @@ def _can_see_channel(db, channel: dict, user_id: str, org_id: str, member_role: 
 
 class CreateChannelRequest(BaseModel):
     name: str
+    description: Optional[str] = None
     is_restricted: bool = False
-    visibility: str = "everyone"
-    allowed_members: List[str] = []
+    visibility: str = "public"  # "public" | "restricted"
+    allowed_members: List[str] = []  # user IDs
 
 
 class UpdateChannelRequest(BaseModel):
     name: Optional[str] = None
+    description: Optional[str] = None
     is_restricted: Optional[bool] = None
     visibility: Optional[str] = None
     allowed_members: Optional[List[str]] = None
+    allowed_roles: Optional[List[str]] = None
 
 
 @router.get("/{org_id}/channels")
@@ -197,7 +211,7 @@ def create_channel(
     req: CreateChannelRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Create channel. Admin/owner only."""
+    """Create channel. Any approved member can create public; only admin/owner can create restricted."""
     db = get_firestore()
     member = list(
         db.collection("members")
@@ -210,9 +224,15 @@ def create_channel(
     if not member:
         raise HTTPException(status_code=404, detail="Organization not found")
     role = member[0].to_dict().get("role", "member")
-    _require_admin_or_owner(role)
 
-    name = (req.name or "").strip().lower().replace(" ", "-")
+    visibility = (req.visibility or "public").strip().lower()
+    if visibility not in ("public", "restricted"):
+        visibility = "public"
+    is_restricted = req.is_restricted or (visibility == "restricted")
+    if is_restricted and role not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only admins can create restricted channels")
+
+    name = (req.name or "").strip().lower().replace(" ", "-").replace("?", "").replace("'", "")
     if not name:
         raise HTTPException(status_code=400, detail="Channel name required")
     if name == "general":
@@ -228,15 +248,24 @@ def create_channel(
     if existing:
         raise HTTPException(status_code=400, detail="Channel already exists")
 
+    allowed_members = list(req.allowed_members or [])
+    if is_restricted and user["id"] not in allowed_members:
+        allowed_members.append(user["id"])
+    allowed_roles = ["restricted", "admin", "owner"] if is_restricted else []
+
     ch_id = generate_uuid()
     now = datetime.now(timezone.utc)
     db.collection("channels").document(ch_id).set({
         "id": ch_id,
         "organization_id": org_id,
         "name": name,
-        "is_restricted": req.is_restricted,
-        "visibility": req.visibility or "everyone",
-        "allowed_members": req.allowed_members or [],
+        "description": (req.description or "").strip() or None,
+        "is_restricted": is_restricted,
+        "is_default": False,
+        "visibility": visibility,
+        "allowed_members": allowed_members,
+        "allowed_roles": allowed_roles,
+        "created_by": user["id"],
         "created_at": now,
     })
     return {"id": ch_id, "ok": True}
@@ -249,7 +278,7 @@ def update_channel(
     req: UpdateChannelRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Update channel. Admin/owner only."""
+    """Update channel. Creator or admin/owner. Only admin can change visibility to restricted."""
     db = get_firestore()
     member = list(
         db.collection("members")
@@ -262,24 +291,44 @@ def update_channel(
     if not member:
         raise HTTPException(status_code=404, detail="Organization not found")
     role = member[0].to_dict().get("role", "member")
-    _require_admin_or_owner(role)
 
     ref = db.collection("channels").document(channel_id)
     doc = ref.get()
     if not doc.exists or doc.to_dict().get("organization_id") != org_id:
         raise HTTPException(status_code=404, detail="Channel not found")
+    ch = doc.to_dict()
+    creator = ch.get("created_by")
+    is_creator = creator == user["id"]
+    is_admin = role in ("owner", "admin")
+    if not is_creator and not is_admin:
+        raise HTTPException(status_code=403, detail="Only the channel creator or an admin can update this channel")
 
     updates = {}
     if req.name is not None:
-        name = req.name.strip().lower().replace(" ", "-")
+        name = req.name.strip().lower().replace(" ", "-").replace("?", "").replace("'", "")
         if name and name != "general":
             updates["name"] = name
+    if req.description is not None:
+        updates["description"] = (req.description or "").strip() or None
     if req.is_restricted is not None:
         updates["is_restricted"] = req.is_restricted
     if req.visibility is not None:
-        updates["visibility"] = req.visibility
+        new_vis = req.visibility.strip().lower()
+        if new_vis in ("public", "restricted"):
+            if new_vis == "restricted" and not is_admin:
+                raise HTTPException(status_code=403, detail="Only admins can set channel to restricted")
+            updates["visibility"] = new_vis
+            if new_vis == "restricted":
+                updates["is_restricted"] = True
+                updates["allowed_roles"] = ["restricted", "admin", "owner"]
+            else:
+                updates["is_restricted"] = False
+                updates["allowed_roles"] = []
+                updates["allowed_members"] = []
     if req.allowed_members is not None:
         updates["allowed_members"] = req.allowed_members
+    if req.allowed_roles is not None:
+        updates["allowed_roles"] = req.allowed_roles
 
     if updates:
         ref.update(updates)
@@ -292,7 +341,7 @@ def delete_channel(
     channel_id: str,
     user: dict = Depends(get_current_user),
 ):
-    """Delete channel. Admin/owner only. Cannot delete #general."""
+    """Delete channel. Creator or admin/owner. Cannot delete #general."""
     db = get_firestore()
     member = list(
         db.collection("members")
@@ -305,14 +354,16 @@ def delete_channel(
     if not member:
         raise HTTPException(status_code=404, detail="Organization not found")
     role = member[0].to_dict().get("role", "member")
-    _require_admin_or_owner(role)
 
     ref = db.collection("channels").document(channel_id)
     doc = ref.get()
     if not doc.exists or doc.to_dict().get("organization_id") != org_id:
         raise HTTPException(status_code=404, detail="Channel not found")
-    if doc.to_dict().get("name") == "general":
+    ch = doc.to_dict()
+    if ch.get("is_default") or (ch.get("name") or "").lower() == "general":
         raise HTTPException(status_code=400, detail="Cannot delete #general")
+    if ch.get("created_by") != user["id"] and role not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only the channel creator or an admin can delete this channel")
 
     ref.delete()
     return {"ok": True}

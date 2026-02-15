@@ -1,6 +1,13 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+
+function safeReturnPath(returnParam: string | null): string | null {
+  if (!returnParam || typeof returnParam !== 'string') return null
+  const path = decodeURIComponent(returnParam).replace(/^\/+/, '/')
+  if (path.startsWith('/org/') || path.startsWith('/join')) return path
+  return null
+}
 
 // Using inline styles only to rule out Tailwind/component issues
 const s = {
@@ -50,6 +57,8 @@ const s = {
 }
 
 export function SignUp() {
+  const [searchParams] = useSearchParams()
+  const returnTo = safeReturnPath(searchParams.get('return'))
   const [email, setEmail] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -65,7 +74,7 @@ export function SignUp() {
     setLoading(true)
     try {
       await signup(email, firstName, lastName, password)
-      navigate('/user-dashboard')
+      navigate(returnTo || '/user-dashboard')
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string | { msg?: string }[] } }; message?: string }
       const detail = e.response?.data?.detail

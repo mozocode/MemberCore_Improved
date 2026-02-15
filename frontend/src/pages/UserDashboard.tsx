@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/contexts/AuthContext'
 import { api } from '@/lib/api'
-import { Plus, Users, LogOut, Loader2, MoreVertical, UserPlus, Building2 } from 'lucide-react'
+import { Plus, Users, LogOut, Loader2, MoreVertical, UserPlus, Building2, Shield } from 'lucide-react'
 
 interface Organization {
   id: string
@@ -13,6 +13,7 @@ interface Organization {
   icon_color?: string
   logo?: string
   public_slug?: string
+  membership_status?: 'approved' | 'pending'
 }
 
 export function UserDashboard() {
@@ -45,7 +46,7 @@ export function UserDashboard() {
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+      <nav className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-zinc-800">
         <Link to="/" className="text-xl font-bold">
           MemberCore
         </Link>
@@ -69,7 +70,7 @@ export function UserDashboard() {
                     setMenuOpen(false)
                     navigate('/join')
                   }}
-                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800"
+                  className="flex w-full items-center gap-2 px-4 py-3 min-h-[44px] text-left text-sm text-zinc-200 hover:bg-zinc-800"
                 >
                   <UserPlus className="h-4 w-4" />
                   Join an organization
@@ -80,18 +81,31 @@ export function UserDashboard() {
                     setMenuOpen(false)
                     navigate('/create-organization')
                   }}
-                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800"
+                  className="flex w-full items-center gap-2 px-4 py-3 min-h-[44px] text-left text-sm text-zinc-200 hover:bg-zinc-800"
                 >
                   <Building2 className="h-4 w-4" />
                   Create an organization
                 </button>
+                {user?.is_platform_admin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      navigate('/super-admin')
+                    }}
+                    className="flex w-full items-center gap-2 px-4 py-3 min-h-[44px] text-left text-sm text-zinc-200 hover:bg-zinc-800"
+                  >
+                    <Shield className="h-4 w-4" />
+                    Super Admin
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false)
                     signout()
                   }}
-                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800 hover:text-red-400"
+                  className="flex w-full items-center gap-2 px-4 py-3 min-h-[44px] text-left text-sm text-zinc-200 hover:bg-zinc-800 hover:text-red-400"
                 >
                   <LogOut className="h-4 w-4" />
                   Sign Out
@@ -102,13 +116,14 @@ export function UserDashboard() {
         </div>
       </nav>
 
-      <main className="max-w-4xl mx-auto px-6 py-12">
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-2xl font-bold">Your Organizations</h1>
-          <Link to="/create-organization">
-            <Button>
-              <Plus className="h-4 w-4" />
-              Create Organization
+      <main className="max-w-4xl mx-auto px-4 md:px-6 lg:px-8 py-8 md:py-12">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+          <h1 className="text-2xl md:text-3xl font-bold text-white">Your Organizations</h1>
+          {/* Desktop: button in header row */}
+          <Link to="/create-organization" className="hidden sm:inline-flex">
+            <Button className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-2 px-4 py-2">
+              <Plus className="h-4 w-4 shrink-0" />
+              <span>Create Organization</span>
             </Button>
           </Link>
         </div>
@@ -131,33 +146,59 @@ export function UserDashboard() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4">
-            {orgs.map((org) => (
-              <Link key={org.id} to={`/org/${org.id}`}>
-                <Card className="border-zinc-800 hover:border-zinc-700 transition-colors cursor-pointer">
+          <div className="flex flex-col gap-4">
+            <div className="grid gap-4">
+            {orgs.map((org) => {
+              const isPending = org.membership_status === 'pending'
+              const card = (
+                <Card
+                  className={`border-zinc-800 transition-colors ${
+                    isPending ? 'cursor-default' : 'hover:border-zinc-700 cursor-pointer'
+                  }`}
+                >
                   <CardHeader className="flex flex-row items-center gap-4">
                     {org.logo ? (
                       <img
                         src={org.logo}
                         alt=""
-                        className="h-12 w-12 rounded-lg object-cover"
+                        className="h-12 w-12 rounded-lg object-cover shrink-0"
                       />
                     ) : (
                       <div
-                        className="h-12 w-12 rounded-lg flex items-center justify-center"
+                        className="h-12 w-12 rounded-lg flex items-center justify-center shrink-0"
                         style={{ backgroundColor: org.icon_color || '#3f3f46' }}
                       >
                         <Users className="h-6 w-6" />
                       </div>
                     )}
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <CardTitle>{org.name}</CardTitle>
                       <p className="text-sm text-zinc-400">{org.type}</p>
                     </div>
+                    {isPending && (
+                      <p className="text-sm text-zinc-300 shrink-0">
+                        Your membership is pending approval
+                      </p>
+                    )}
                   </CardHeader>
                 </Card>
-              </Link>
-            ))}
+              )
+              return isPending ? (
+                <div key={org.id}>{card}</div>
+              ) : (
+                <Link key={org.id} to={`/org/${org.id}`}>
+                  {card}
+                </Link>
+              )
+            })}
+            </div>
+            {/* Mobile: + button below org list when organizations exist */}
+            <Link to="/create-organization" className="sm:hidden">
+              <Button className="w-full min-h-[44px] flex items-center justify-center gap-2 px-4 py-2">
+                <Plus className="h-4 w-4 shrink-0" />
+                <span>Create Organization</span>
+              </Button>
+            </Link>
           </div>
         )}
       </main>

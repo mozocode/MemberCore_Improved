@@ -18,6 +18,13 @@ class CreatePlanRequest(BaseModel):
     frequency: str = "one_time"  # one_time, monthly, annual
 
 
+class UpdatePlanRequest(BaseModel):
+    name: Optional[str] = None
+    amount: Optional[float] = None
+    due_date: Optional[str] = None
+    frequency: Optional[str] = None
+
+
 def _require_org_member(db, org_id: str, user_id: str):
     members = (
         db.collection("members")
@@ -145,6 +152,39 @@ def create_dues_plan(
         "created_at": now,
     })
     return {"id": plan_id, "ok": True}
+
+
+@router.put("/{org_id}/plans/{plan_id}")
+def update_dues_plan(
+    org_id: str,
+    plan_id: str,
+    req: UpdatePlanRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Update dues plan. Admin/owner only."""
+    db = get_firestore()
+    _require_admin_or_owner(db, org_id, user["id"])
+
+    plan_ref = db.collection("dues_plans").document(plan_id)
+    plan_doc = plan_ref.get()
+    if not plan_doc.exists or plan_doc.to_dict().get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    updates = {}
+    if req.name is not None:
+        updates["name"] = req.name.strip()
+    if req.amount is not None:
+        updates["amount"] = float(req.amount)
+    if req.due_date is not None:
+        updates["due_date"] = req.due_date or None
+    if req.frequency is not None:
+        updates["frequency"] = req.frequency
+    if not updates:
+        return {"ok": True}
+
+    updates["updated_at"] = datetime.now(timezone.utc)
+    plan_ref.update(updates)
+    return {"ok": True}
 
 
 @router.get("/{org_id}/plans")

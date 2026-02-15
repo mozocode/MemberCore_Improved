@@ -2,6 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, EmailStr
 
+from app.config import settings
 from app.db.firebase import get_firestore, doc_to_dict
 from app.core.security import (
     hash_password,
@@ -71,7 +72,7 @@ def signup(req: SignUpRequest):
         "avatar": None,
         "phone_number": None,
         "is_active": True,
-        "is_platform_admin": email_lower == "admin@example.com",
+        "is_platform_admin": (email_lower == (settings.super_admin_email or "").strip().lower()),
         "created_at": None,  # Firestore will use server timestamp if we use set()
         "updated_at": None,
     }

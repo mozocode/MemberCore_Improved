@@ -1,13 +1,19 @@
-"""Public events directory API - no auth required for directory listing."""
+"""Public events directory API - no auth required for listing; auth for RSVP."""
 import math
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException, Depends
+from pydantic import BaseModel
 
 from app.db.firebase import get_firestore
+from app.core.security import get_current_user_id, generate_uuid
 
 router = APIRouter()
+
+
+class PublicRsvpRequest(BaseModel):
+    status: str  # "yes" | "maybe" | "no"
 
 
 def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -39,6 +45,14 @@ def get_public_directory(
     """
     db = get_firestore()
     now = datetime.now(timezone.utc)
+
+    # Treat empty string or literal "null" as not provided
+    def _present(s: Optional[str]) -> bool:
+        return s is not None and s != "" and s.strip().lower() != "null"
+
+    org_type = org_type if _present(org_type) else None
+    cultural_identity = cultural_identity if _present(cultural_identity) else None
+    sport_type = sport_type if _present(sport_type) else None
 
     # Get matching organization IDs if org filters applied
     org_ids = None
@@ -171,10 +185,128 @@ def get_public_directory(
             db.collection("event_rsvps").where("event_id", "==", event["id"]).stream()
         )
         event["going_count"] = sum(
-            1 for r in rsvps if r.to_dict().get("status") == "going"
+            1 for r in rsvps if r.to_dict().get("status") == "yes"
         )
         event["maybe_count"] = sum(
             1 for r in rsvps if r.to_dict().get("status") == "maybe"
         )
 
     return events
+
+
+@router.get("/public/directory/{event_id}")
+def get_public_event(event_id: str):
+    """Get a single public directory event by ID. No auth. Returns 404 if not public."""
+    db = get_firestore()
+    doc = db.collection("events").document(event_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ed = doc.to_dict()
+    if not ed.get("is_public_directory"):
+        raise HTTPException(status_code=404, detail="Event not found")
+    ed["id"] = doc.id
+    org_id = ed.get("organization_id")
+    if org_id:
+        org_doc = db.collection("organizations").document(org_id).get()
+        if org_doc.exists:
+            od = org_doc.to_dict()
+            ed["organization"] = {
+                "id": org_id,
+                "name": od.get("name"),
+                "logo": od.get("logo"),
+                "type": od.get("type"),
+                "cultural_identity": od.get("cultural_identity"),
+                "sport_type": od.get("sport_type"),
+                "icon_color": od.get("icon_color"),
+            }
+    rsvps = list(
+        db.collection("event_rsvps").where("event_id", "==", event_id).stream()
+    )
+    ed["going_count"] = sum(1 for r in rsvps if r.to_dict().get("status") == "yes")
+    ed["maybe_count"] = sum(1 for r in rsvps if r.to_dict().get("status") == "maybe")
+    return ed
+
+
+@router.post("/public/{event_id}/rsvp")
+def public_event_rsvp(
+    event_id: str,
+    req: PublicRsvpRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """RSVP to a public directory event. Auth required. No org membership required."""
+    if req.status not in ("yes", "maybe", "no"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    db = get_firestore()
+    doc = db.collection("events").document(event_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ed = doc.to_dict()
+    if not ed.get("is_public_directory"):
+        raise HTTPException(status_code=404, detail="Event not found")
+    existing = list(
+        db.collection("event_rsvps")
+        .where("event_id", "==", event_id)
+        .where("user_id", "==", user_id)
+        .limit(1)
+        .get()
+    )
+    now = datetime.now(timezone.utc)
+    if existing:
+        db.collection("event_rsvps").document(existing[0].id).update({
+            "status": req.status,
+            "updated_at": now,
+        })
+    else:
+        rsvp_id = generate_uuid()
+        db.collection("event_rsvps").document(rsvp_id).set({
+            "id": rsvp_id,
+            "event_id": event_id,
+            "user_id": user_id,
+            "status": req.status,
+            "created_at": now,
+        })
+    return {"ok": True, "status": req.status}
+
+
+@router.get("/public/{event_id}/my-rsvp")
+def get_public_event_my_rsvp(
+    event_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get current user's RSVP for a public event. Auth required."""
+    db = get_firestore()
+    doc = db.collection("events").document(event_id).get()
+    if not doc.exists or not doc.to_dict().get("is_public_directory"):
+        raise HTTPException(status_code=404, detail="Event not found")
+    rsvps = list(
+        db.collection("event_rsvps")
+        .where("event_id", "==", event_id)
+        .where("user_id", "==", user_id)
+        .limit(1)
+        .get()
+    )
+    if not rsvps:
+        return {"status": None}
+    return {"status": rsvps[0].to_dict().get("status")}
+
+
+@router.delete("/public/{event_id}/rsvp")
+def public_event_cancel_rsvp(
+    event_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Cancel RSVP for a public directory event."""
+    db = get_firestore()
+    doc = db.collection("events").document(event_id).get()
+    if not doc.exists or not doc.to_dict().get("is_public_directory"):
+        raise HTTPException(status_code=404, detail="Event not found")
+    existing = list(
+        db.collection("event_rsvps")
+        .where("event_id", "==", event_id)
+        .where("user_id", "==", user_id)
+        .limit(1)
+        .get()
+    )
+    for r in existing:
+        r.reference.delete()
+    return {"ok": True}

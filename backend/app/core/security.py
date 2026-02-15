@@ -74,13 +74,16 @@ def get_current_user(
 def require_platform_admin(
     user: dict = Depends(get_current_user),
 ) -> dict:
-    """Require platform admin. Raises 403 if not admin."""
-    if not user.get("is_platform_admin"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Platform admin access required",
-        )
-    return user
+    """Require super admin: is_platform_admin or email matches SUPER_ADMIN_EMAIL. Raises 403 if not."""
+    from app.config import settings
+    email = (user.get("email") or "").strip().lower()
+    super_email = (settings.super_admin_email or "").strip().lower()
+    if user.get("is_platform_admin") or (super_email and email == super_email):
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Platform admin access required",
+    )
 
 
 def generate_uuid() -> str:

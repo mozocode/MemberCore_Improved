@@ -64,10 +64,13 @@ def list_members(
         user_doc = db.collection("users").document(md["user_id"]).get()
         if user_doc.exists:
             ud = user_doc.to_dict()
-            md["name"] = ud.get("name") or ud.get("email", "")
+            full_name = ud.get("name") or ud.get("email", "") or ""
+            nickname = (md.get("nickname") or "").strip()
+            display_name = nickname if nickname else (full_name.split()[0] if full_name else "Unknown")
+            md["name"] = display_name
             md["email"] = ud.get("email", "")
             md["avatar"] = ud.get("avatar")
-            md["initial"] = (md.get("name") or "?")[0].upper()
+            md["initial"] = (display_name or "?")[0].upper()
         else:
             md["name"] = "Unknown"
             md["email"] = ""

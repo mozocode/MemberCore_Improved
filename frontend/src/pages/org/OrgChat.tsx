@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { Link } from 'react-router-dom'
 import {
@@ -11,18 +12,28 @@ import {
   User,
   Calendar,
   BarChart2,
+  ChevronDown,
+  Shield,
+  Settings,
 } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ChannelSettingsModal } from '@/components/ChannelSettingsModal'
 import { cn } from '@/lib/utils'
 
 interface Channel {
   id: string
   name: string
+  description?: string | null
   is_restricted?: boolean
+  is_default?: boolean
   visibility?: string
+  created_by?: string | null
+  allowed_members?: string[]
+  allowed_roles?: string[]
 }
 
 interface Message {
@@ -67,6 +78,7 @@ function getWsUrl(orgId: string): string {
 
 export function OrgChat() {
   const { orgId } = useParams<{ orgId: string }>()
+  const { user } = useAuth()
   const [channels, setChannels] = useState<Channel[]>([])
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -76,14 +88,21 @@ export function OrgChat() {
   const [sending, setSending] = useState(false)
   const [createModal, setCreateModal] = useState(false)
   const [newChannelName, setNewChannelName] = useState('')
+  const [newChannelVisibility, setNewChannelVisibility] = useState<'public' | 'restricted'>('public')
   const [createError, setCreateError] = useState('')
   const [createLoading, setCreateLoading] = useState(false)
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [myRole, setMyRole] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activeChannelIdRef = useRef<string | null>(null)
 
   const token = localStorage.getItem('token')
+
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannel?.id ?? null
+  }, [activeChannel?.id])
 
   const fetchChannels = useCallback(async () => {
     if (!orgId) return
@@ -91,8 +110,10 @@ export function OrgChat() {
     try {
       const res = await api.get<Channel[]>(`/chat/${orgId}/channels`)
       setChannels(res.data)
-      if (!activeChannel && res.data.length > 0) {
-        setActiveChannel(res.data[0])
+      if (res.data.length > 0) {
+        const general = res.data.find((ch) => (ch.name || '').toLowerCase() === 'general' || ch.is_default)
+        const defaultChannel = general ?? res.data[0]
+        setActiveChannel((prev) => (prev ? prev : defaultChannel))
       }
     } catch {
       setChannels([])
@@ -101,16 +122,24 @@ export function OrgChat() {
     }
   }, [orgId])
 
-  const fetchMessages = useCallback(async () => {
+  const fetchMessages = useCallback(async (silentRefetch = false) => {
     if (!orgId || !activeChannel) return
-    setLoadingMessages(true)
+    const channelId = activeChannel.id
+    if (!silentRefetch) {
+      setLoadingMessages(true)
+      setMessages((prev) => (prev.length ? [] : prev))
+    }
     try {
-      const res = await api.get<Message[]>(`/chat/${orgId}/channels/${activeChannel.id}/messages`)
+      const res = await api.get<Message[]>(`/chat/${orgId}/channels/${channelId}/messages`)
+      if (activeChannelIdRef.current !== channelId) return
       setMessages(res.data || [])
     } catch {
+      if (activeChannelIdRef.current !== channelId) return
       setMessages([])
     } finally {
-      setLoadingMessages(false)
+      if (activeChannelIdRef.current === channelId) {
+        setLoadingMessages(false)
+      }
     }
   }, [orgId, activeChannel])
 
@@ -119,8 +148,9 @@ export function OrgChat() {
   }, [fetchChannels])
 
   useEffect(() => {
+    if (!activeChannel) return
     fetchMessages()
-  }, [fetchMessages])
+  }, [activeChannel?.id, fetchMessages])
 
   useEffect(() => {
     if (!orgId) return
@@ -166,7 +196,7 @@ export function OrgChat() {
       if (pingInt) clearInterval(pingInt)
       wsRef.current = null
       reconnectRef.current = setTimeout(() => {
-        fetchMessages()
+        fetchMessages(true)
       }, 2000)
     }
 
@@ -209,16 +239,21 @@ export function OrgChat() {
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault()
     setCreateError('')
-    const name = newChannelName.trim().toLowerCase().replace(/\s+/g, '-')
+    const name = newChannelName.trim().toLowerCase().replace(/\s+/g, '-').replace(/\?/g, '')
     if (!name || !orgId) {
       setCreateError('Channel name required')
       return
     }
     setCreateLoading(true)
     try {
-      await api.post(`/chat/${orgId}/channels`, { name, visibility: 'everyone', is_restricted: false })
+      await api.post(`/chat/${orgId}/channels`, {
+        name,
+        visibility: newChannelVisibility,
+        is_restricted: newChannelVisibility === 'restricted',
+      })
       setCreateModal(false)
       setNewChannelName('')
+      setNewChannelVisibility('public')
       fetchChannels()
     } catch (err: unknown) {
       setCreateError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to create channel')
@@ -228,60 +263,141 @@ export function OrgChat() {
   }
 
   const canManage = myRole === 'owner' || myRole === 'admin'
+  const isRestrictedChannel = (ch: Channel) => ch.visibility === 'restricted' || ch.is_restricted
+  const canEditActiveChannel = activeChannel && (activeChannel.created_by === user?.id || canManage)
+  const [channelDropdownOpen, setChannelDropdownOpen] = useState(false)
+  const channelDropdownRef = useRef<HTMLDivElement>(null)
+  const [mobileHeaderTarget, setMobileHeaderTarget] = useState<HTMLElement | null>(null)
+
+  // Only portal header into layout on mobile (layout hides that slot on lg+). On desktop always show in-content header.
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1023px)')
+    const check = () => {
+      if (!mq.matches) {
+        setMobileHeaderTarget(null)
+        return
+      }
+      const el = document.getElementById('chat-header-extra')
+      setMobileHeaderTarget(el ?? null)
+    }
+    check()
+    const t = setTimeout(check, 50)
+    mq.addEventListener('change', check)
+    return () => {
+      clearTimeout(t)
+      mq.removeEventListener('change', check)
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (channelDropdownRef.current && !channelDropdownRef.current.contains(e.target as Node)) {
+        setChannelDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const channelDropdownContent = (
+    <div className="relative" ref={channelDropdownRef}>
+      <button
+        type="button"
+        onClick={() => setChannelDropdownOpen((o) => !o)}
+        disabled={loadingChannels || channels.length === 0}
+        className="flex items-center gap-2 px-3 py-2 sm:px-4 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors disabled:opacity-50 min-h-[44px]"
+      >
+        {activeChannel && isRestrictedChannel(activeChannel) ? (
+          <Shield size={18} className="text-amber-500 shrink-0" />
+        ) : (
+          <Hash size={18} className="text-zinc-400 shrink-0" />
+        )}
+        <span className="text-white font-medium truncate max-w-[120px] sm:max-w-[200px]">
+          {loadingChannels ? 'Loading...' : activeChannel?.name ?? 'Select channel'}
+        </span>
+        <ChevronDown className={cn('w-4 h-4 text-zinc-400 shrink-0 transition-transform', channelDropdownOpen && 'rotate-180')} />
+      </button>
+      {channelDropdownOpen && channels.length > 0 && (
+        <div className="absolute top-full left-0 mt-2 w-56 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl overflow-hidden z-50 max-h-64 overflow-y-auto">
+          {channels.map((ch) => (
+            <button
+              key={ch.id}
+              type="button"
+              onClick={() => {
+                setActiveChannel(ch)
+                setChannelDropdownOpen(false)
+              }}
+              className={cn(
+                'w-full flex items-center gap-2 px-4 py-3 text-left min-h-[44px] transition-colors',
+                ch.id === activeChannel?.id ? 'bg-zinc-800 text-white' : 'text-zinc-300 hover:bg-zinc-800 hover:text-white',
+              )}
+            >
+              {isRestrictedChannel(ch) ? (
+                <Shield size={16} className="text-amber-500 shrink-0" />
+              ) : (
+                <Hash size={16} className="text-zinc-500 shrink-0" />
+              )}
+              <span className="flex-1 truncate">{ch.name}</span>
+              {ch.name === 'general' && <span className="text-xs text-zinc-500 shrink-0">default</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+
+  const settingsButton = canEditActiveChannel ? (
+    <button
+      type="button"
+      onClick={() => setSettingsModalOpen(true)}
+      className="p-2.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center shrink-0"
+      aria-label="Channel settings"
+    >
+      <Settings size={20} />
+    </button>
+  ) : null
+
+  const createChannelButton = (
+    <button
+      type="button"
+      onClick={() => setCreateModal(true)}
+      className="p-2.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center shrink-0"
+      aria-label="Create channel"
+    >
+      <Plus size={22} />
+    </button>
+  )
+
+  const headerExtraContent = (
+    <>
+      {channelDropdownContent}
+      {settingsButton}
+      {createChannelButton}
+    </>
+  )
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] md:h-[calc(100vh-3rem)]">
-      {/* Channel sidebar */}
-      <div className="w-56 shrink-0 border-r border-zinc-800 flex flex-col bg-zinc-950/50">
-        <div className="p-3 border-b border-zinc-800 flex items-center justify-between">
-          <h3 className="font-semibold text-white">Channels</h3>
-          {canManage && (
-            <button
-              onClick={() => setCreateModal(true)}
-              className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white"
-              title="Create channel"
-            >
-              <Plus size={18} />
-            </button>
-          )}
-        </div>
-        <div className="flex-1 overflow-y-auto p-2">
-          {loadingChannels ? (
-            <div className="flex justify-center py-6">
-              <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
-            </div>
-          ) : (
-            <div className="space-y-0.5">
-              {channels.map((ch) => (
-                <button
-                  key={ch.id}
-                  onClick={() => setActiveChannel(ch)}
-                  className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors',
-                    activeChannel?.id === ch.id
-                      ? 'bg-zinc-800 text-white'
-                      : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-white',
-                  )}
-                >
-                  <Hash size={16} />
-                  <span>{ch.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+    <div className="h-full w-full max-w-full min-w-0 flex flex-col overflow-hidden bg-black">
+      {/* On mobile: portal channel dropdown + Create into layout header (one line). On desktop: render full header here. */}
+      {mobileHeaderTarget && createPortal(headerExtraContent, mobileHeaderTarget)}
+      {!mobileHeaderTarget && (
+        <header className="shrink-0 flex items-center justify-between gap-2 h-14 px-4 border-b border-zinc-800 bg-black">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <h1 className="text-lg font-semibold text-white truncate shrink-0">Chat</h1>
+            {channelDropdownContent}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {settingsButton}
+            {createChannelButton}
+          </div>
+        </header>
+      )}
 
-      {/* Messages area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Scrollable messages area - only this section scrolls */}
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
         {activeChannel ? (
           <>
-            <div className="p-4 border-b border-zinc-800 flex items-center gap-2">
-              <Hash size={20} className="text-zinc-500" />
-              <span className="font-semibold text-white">{activeChannel.name}</span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 min-h-0">
               {loadingMessages ? (
                 <div className="flex justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
@@ -382,32 +498,56 @@ export function OrgChat() {
               <div ref={messagesEndRef} />
             </div>
 
-            <form onSubmit={handleSend} className="p-4 border-t border-zinc-800">
+            {/* Fixed input bar - safe-area so it stays above browser UI on mobile */}
+            <form onSubmit={handleSend} className="shrink-0 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-zinc-800 bg-black">
               <div className="flex gap-2">
                 <Input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   placeholder={`Message #${activeChannel.name}`}
                   disabled={sending}
-                  className="flex-1 bg-zinc-900 border-zinc-700 text-white placeholder:text-zinc-500"
+                  className="flex-1 bg-zinc-900 border-zinc-700 text-white placeholder:text-zinc-500 min-h-[44px]"
                 />
-                <Button type="submit" disabled={sending || !input.trim()} size="icon" className="shrink-0 bg-white text-black hover:bg-zinc-200">
+                <Button type="submit" disabled={sending || !input.trim()} size="icon" className="shrink-0 bg-white text-black hover:bg-zinc-200 min-h-[44px] min-w-[44px]">
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send size={18} />}
                 </Button>
               </div>
             </form>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-zinc-500">
+          <div className="flex-1 flex items-center justify-center text-zinc-500 p-4 min-h-0">
             <div className="text-center">
               <MessageSquare size={48} className="mx-auto mb-3 opacity-50" />
-              <p>Select a channel</p>
+              <p>Select a channel from the dropdown above</p>
             </div>
           </div>
         )}
       </div>
 
       {/* Create channel modal */}
+      {settingsModalOpen && activeChannel && (
+        <ChannelSettingsModal
+          orgId={orgId!}
+          channel={activeChannel}
+          currentUserId={user?.id}
+          currentUserRole={myRole}
+          onClose={() => setSettingsModalOpen(false)}
+          onUpdated={(updated) => {
+            setActiveChannel((prev) => (prev?.id === updated.id ? { ...prev, ...updated } : prev))
+            setChannels((prev) => prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)))
+          }}
+          onDeleted={(deletedId) => {
+            setSettingsModalOpen(false)
+            setChannels((prev) => prev.filter((c) => c.id !== deletedId))
+            if (activeChannel?.id === deletedId) {
+              const remaining = channels.filter((c) => c.id !== deletedId)
+              setActiveChannel(remaining[0] ?? null)
+            }
+            fetchChannels()
+          }}
+        />
+      )}
+
       {createModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60" onClick={() => setCreateModal(false)} aria-hidden />
@@ -430,6 +570,44 @@ export function OrgChat() {
                   className="mt-1 bg-zinc-800 border-zinc-700"
                 />
               </div>
+              {canManage && (
+                <div>
+                  <Label className="text-zinc-300 mb-2 block">Visibility</Label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewChannelVisibility('public')}
+                      className={cn(
+                        'flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg border transition-colors',
+                        newChannelVisibility === 'public'
+                          ? 'border-white bg-zinc-700 text-white'
+                          : 'border-zinc-700 text-zinc-400 hover:text-white',
+                      )}
+                    >
+                      <Hash size={18} />
+                      Public
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewChannelVisibility('restricted')}
+                      className={cn(
+                        'flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg border transition-colors',
+                        newChannelVisibility === 'restricted'
+                          ? 'border-amber-500 bg-amber-500/10 text-amber-500'
+                          : 'border-zinc-700 text-zinc-400 hover:text-amber-500',
+                      )}
+                    >
+                      <Shield size={18} />
+                      Restricted
+                    </button>
+                  </div>
+                  {newChannelVisibility === 'restricted' && (
+                    <p className="text-xs text-amber-500/90 mt-1.5">
+                      Only members with Restricted role or those you add can see this channel.
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="flex gap-2 pt-4">
                 <Button type="button" variant="outline" onClick={() => setCreateModal(false)} className="flex-1 bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700">
                   Cancel

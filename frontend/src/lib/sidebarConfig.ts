@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   MessageSquare,
+  Mail,
   Calendar,
   MapPin,
   Users,
@@ -15,7 +16,7 @@ export interface SidebarMenuItem {
   label: string
   icon: LucideIcon
   route: string
-  badge?: 'unreadChatCount'
+  badge?: 'unreadChatCount' | 'unreadMessagesCount'
   alwaysVisible: boolean
   permission: string
 }
@@ -28,6 +29,15 @@ export function getSidebarMenuItems(orgId: string, duesLabel: string): SidebarMe
       icon: MessageSquare,
       route: `/org/${orgId}/chat`,
       badge: 'unreadChatCount',
+      alwaysVisible: true,
+      permission: 'chat.view',
+    },
+    {
+      id: 'messages',
+      label: 'Messages',
+      icon: Mail,
+      route: `/org/${orgId}/messages`,
+      badge: 'unreadMessagesCount',
       alwaysVisible: true,
       permission: 'chat.view',
     },

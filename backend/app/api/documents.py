@@ -54,6 +54,11 @@ class UploadForTemplateRequest(BaseModel):
     file_url: str
 
 
+class CreateGoogleFormRequest(BaseModel):
+    title: str
+    form_url: str
+
+
 def _require_org_member(db, org_id: str, user_id: str):
     members = (
         db.collection("members")
@@ -327,6 +332,80 @@ def list_template_submissions(
         })
     result.sort(key=lambda x: (str(x.get("uploaded_at") or ""),), reverse=True)
     return result
+
+
+@router.get("/{org_id}/google-forms")
+def list_google_forms(
+    org_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """List Google Forms linked to this organization. Any member can view."""
+    db = get_firestore()
+    _require_org_member(db, org_id, user_id)
+
+    docs = list(
+        db.collection("org_google_forms")
+        .where("organization_id", "==", org_id)
+        .stream()
+    )
+    result = []
+    for doc in docs:
+        d = doc.to_dict()
+        d["id"] = doc.id
+        result.append(d)
+    result.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return result
+
+
+@router.post("/{org_id}/google-forms")
+def create_google_form(
+    org_id: str,
+    req: CreateGoogleFormRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Add a Google Form link. Admin/owner only."""
+    db = get_firestore()
+    role = _require_org_member(db, org_id, user["id"])
+    _require_admin_or_owner(role)
+
+    form_url = (req.form_url or "").strip()
+    if not form_url:
+        raise HTTPException(status_code=400, detail="Form URL is required")
+    if not form_url.startswith("https://"):
+        form_url = "https://" + form_url
+
+    doc_id = generate_uuid()
+    now = datetime.now(timezone.utc)
+    db.collection("org_google_forms").document(doc_id).set({
+        "id": doc_id,
+        "organization_id": org_id,
+        "title": (req.title or "Google Form").strip() or "Google Form",
+        "form_url": form_url,
+        "created_by": user["id"],
+        "created_at": now,
+    })
+    return {"id": doc_id, "ok": True}
+
+
+@router.delete("/{org_id}/google-forms/{form_id}")
+def delete_google_form(
+    org_id: str,
+    form_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Remove a linked Google Form. Admin/owner only."""
+    db = get_firestore()
+    role = _require_org_member(db, org_id, user["id"])
+    _require_admin_or_owner(role)
+
+    ref = db.collection("org_google_forms").document(form_id)
+    doc = ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Form link not found")
+    if doc.to_dict().get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="Form link not found")
+    ref.delete()
+    return {"ok": True}
 
 
 @router.get("/{org_id}")

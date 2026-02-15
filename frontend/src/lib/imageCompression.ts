@@ -1,3 +1,28 @@
+export interface CompressImageOptions {
+  maxSize?: number
+  maxBytes?: number
+}
+
+/**
+ * Compress an image file for upload (avatars, documents, templates).
+ * Alias for compressCoverImage with options object; maxBytes is a hint (quality is reduced if needed).
+ */
+export async function compressImageFile(
+  file: File,
+  options?: CompressImageOptions
+): Promise<string> {
+  const maxSize = options?.maxSize ?? 1200
+  let result = await compressCoverImage(file, maxSize, 0.8)
+  const maxBytes = options?.maxBytes
+  if (maxBytes && result.length > maxBytes) {
+    for (const q of [0.6, 0.5, 0.4, 0.3]) {
+      result = await compressCoverImage(file, Math.max(800, Math.round(maxSize * 0.8)), q)
+      if (result.length <= maxBytes) break
+    }
+  }
+  return result
+}
+
 /**
  * Compress cover/banner images for events.
  * Preserves aspect ratio; scales so the longest side is at most maxSize.

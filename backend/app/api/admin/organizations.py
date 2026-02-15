@@ -41,8 +41,23 @@ class IdentityUpdate(BaseModel):
     lock_identifiers: Optional[bool] = None
 
 
+def _activation_score(org_dict: dict, member_count: int) -> int:
+    score = 0
+    if member_count >= 1:
+        score += 1
+    if member_count >= 5:
+        score += 1
+    if member_count >= 10:
+        score += 1
+    if org_dict.get("description"):
+        score += 1
+    if org_dict.get("logo"):
+        score += 1
+    return min(score, 5)
+
+
 def _org_with_admin_fields(db, org_doc) -> dict:
-    """Enrich org doc with owner email, metrics, billing, etc."""
+    """Enrich org doc with owner email, metrics, activation_score, billing, etc."""
     d = org_doc.to_dict()
     d["id"] = org_doc.id
     owner_id = d.get("owner_id")
@@ -62,6 +77,7 @@ def _org_with_admin_fields(db, org_doc) -> dict:
     members = list(db.collection("members").where("organization_id", "==", org_doc.id).get())
     d["member_count"] = len(members)
     d["admin_count"] = sum(1 for m in members if m.to_dict().get("role") in ("owner", "admin"))
+    d["activation_score"] = _activation_score(d, len(members))
     events = list(db.collection("events").where("organization_id", "==", org_doc.id).get())
     d["event_count"] = len(events)
     last_activity = d.get("updated_at") or d.get("created_at")
@@ -70,16 +86,21 @@ def _org_with_admin_fields(db, org_doc) -> dict:
         if t and (not last_activity or (t > last_activity)):
             last_activity = t
     d["last_activity_at"] = last_activity
-    # Billing (from org or admin_billing subcollection)
+    # Billing
     d.setdefault("subscription_status", "Free" if not d.get("is_pro") else "Pro")
+    d["plan"] = "Pro" if d.get("is_pro") else "Free"
     d.setdefault("billing_exempt", d.get("platform_admin_owned", False))
     d.setdefault("billing_state", "Active")
     d.setdefault("trial_end_date", d.get("trial_start_date"))
     d.setdefault("next_billing_date", None)
     d.setdefault("last_payment_date", None)
-    d.setdefault("payment_provider_id", None)
+    d.setdefault("payment_provider_id", d.get("stripe_customer_id"))
     d.setdefault("feature_overrides", {})
     return d
+
+
+class BulkDeleteOrgsRequest(BaseModel):
+    org_ids: List[str]
 
 
 @router.get("/organizations")
@@ -87,30 +108,48 @@ def list_organizations_admin(
     admin: dict = Depends(require_platform_admin),
     search: Optional[str] = Query(None),
     verified: Optional[bool] = Query(None),
+    verified_filter: str = Query("All", description="All | Verified | Unverified"),
     suspended: Optional[bool] = Query(None),
-    subscription: Optional[str] = Query(None),  # Free, Pro, Inactive
+    include_suspended: bool = Query(True, description="Include suspended orgs in list"),
+    include_deleted: bool = Query(False, description="Include soft-deleted orgs"),
+    subscription: Optional[str] = Query(None),
+    plan_filter: str = Query("All", description="All | Free | Pro"),
 ):
-    """Organizations dashboard - all orgs with admin fields."""
+    """Organizations dashboard - all orgs with admin fields and filters."""
     db = get_firestore()
     orgs_ref = db.collection("organizations")
-    query = orgs_ref.where("is_deleted", "==", False)
-    if suspended is not None:
-        query = query.where("is_suspended", "==", suspended)
-    if verified is not None:
-        query = query.where("is_verified", "==", verified)
-    docs = list(query.stream())
+    if not include_deleted:
+        orgs_ref = orgs_ref.where("is_deleted", "==", False)
+    docs = list(orgs_ref.stream())
     results = []
     for doc in docs:
-        d = _org_with_admin_fields(db, doc)
+        d = doc.to_dict()
+        if d.get("is_deleted") and not include_deleted:
+            continue
+        if not include_suspended and d.get("is_suspended"):
+            continue
+        if suspended is not None and d.get("is_suspended") != suspended:
+            continue
+        if verified is not None and d.get("is_verified") != verified:
+            continue
+        if verified_filter == "Verified" and not d.get("is_verified"):
+            continue
+        if verified_filter == "Unverified" and d.get("is_verified"):
+            continue
+        doc_with_fields = _org_with_admin_fields(db, doc)
         if subscription:
             want_pro = subscription.lower() == "pro"
-            if want_pro != d.get("is_pro", False):
+            if want_pro != doc_with_fields.get("is_pro", False):
+                continue
+        if plan_filter != "All":
+            want_pro = plan_filter.lower() == "pro"
+            if want_pro != doc_with_fields.get("is_pro", False):
                 continue
         if search:
             s = search.lower()
-            if s not in (d.get("name") or "").lower() and s not in (d.get("owner_email") or "").lower():
+            if s not in (doc_with_fields.get("name") or "").lower() and s not in (doc_with_fields.get("owner_email") or "").lower():
                 continue
-        results.append(d)
+        results.append(doc_with_fields)
     return results
 
 
@@ -131,14 +170,12 @@ def get_organization_admin(org_id: str, admin: dict = Depends(require_platform_a
     return d
 
 
-@router.post("/organizations/{org_id}/verify")
-def verify_organization(org_id: str, admin: dict = Depends(require_platform_admin), note: Optional[str] = Query(None)):
-    db = get_firestore()
+def _verify_org_impl(org_id: str, admin: dict, note: Optional[str], db):
     ref = db.collection("organizations").document(org_id)
     doc = ref.get()
     if not doc.exists:
         raise HTTPException(404, "Organization not found")
-    ref.update({"is_verified": True, "updated_at": datetime.utcnow()})
+    ref.update({"is_verified": True, "verified_at": datetime.utcnow(), "updated_at": datetime.utcnow()})
     ref.collection("verification_history").add({
         "action": "verified",
         "admin_id": admin["id"],
@@ -149,14 +186,12 @@ def verify_organization(org_id: str, admin: dict = Depends(require_platform_admi
     return {"ok": True, "is_verified": True}
 
 
-@router.post("/organizations/{org_id}/unverify")
-def unverify_organization(org_id: str, admin: dict = Depends(require_platform_admin), note: Optional[str] = Query(None)):
-    db = get_firestore()
+def _unverify_org_impl(org_id: str, admin: dict, note: Optional[str], db):
     ref = db.collection("organizations").document(org_id)
     doc = ref.get()
     if not doc.exists:
         raise HTTPException(404, "Organization not found")
-    ref.update({"is_verified": False, "updated_at": datetime.utcnow()})
+    ref.update({"is_verified": False, "verified_at": None, "updated_at": datetime.utcnow()})
     ref.collection("verification_history").add({
         "action": "unverified",
         "admin_id": admin["id"],
@@ -165,6 +200,18 @@ def unverify_organization(org_id: str, admin: dict = Depends(require_platform_ad
         "created_at": datetime.utcnow(),
     })
     return {"ok": True, "is_verified": False}
+
+
+@router.post("/organizations/{org_id}/verify")
+@router.put("/organizations/{org_id}/verify")
+def verify_organization(org_id: str, admin: dict = Depends(require_platform_admin), note: Optional[str] = Query(None)):
+    return _verify_org_impl(org_id, admin, note, get_firestore())
+
+
+@router.post("/organizations/{org_id}/unverify")
+@router.put("/organizations/{org_id}/unverify")
+def unverify_organization(org_id: str, admin: dict = Depends(require_platform_admin), note: Optional[str] = Query(None)):
+    return _unverify_org_impl(org_id, admin, note, get_firestore())
 
 
 @router.post("/organizations/{org_id}/admin-notes")
@@ -182,14 +229,12 @@ def add_admin_note(org_id: str, body: AdminNoteCreate, admin: dict = Depends(req
     return {"ok": True}
 
 
-@router.post("/organizations/{org_id}/suspend")
-def suspend_organization(org_id: str, admin: dict = Depends(require_platform_admin), note: Optional[str] = Query(None)):
-    db = get_firestore()
+def _suspend_org_impl(org_id: str, admin: dict, note: Optional[str], db):
     ref = db.collection("organizations").document(org_id)
     doc = ref.get()
     if not doc.exists:
         raise HTTPException(404, "Organization not found")
-    ref.update({"is_suspended": True, "updated_at": datetime.utcnow()})
+    ref.update({"is_suspended": True, "suspended_at": datetime.utcnow(), "updated_at": datetime.utcnow()})
     if note:
         ref.collection("admin_notes").add({
             "content": f"[SUSPENSION] {note}",
@@ -199,14 +244,24 @@ def suspend_organization(org_id: str, admin: dict = Depends(require_platform_adm
     return {"ok": True, "is_suspended": True}
 
 
-@router.post("/organizations/{org_id}/unsuspend")
-def unsuspend_organization(org_id: str, admin: dict = Depends(require_platform_admin)):
-    db = get_firestore()
+def _unsuspend_org_impl(org_id: str, db):
     ref = db.collection("organizations").document(org_id)
     if not ref.get().exists:
         raise HTTPException(404, "Organization not found")
-    ref.update({"is_suspended": False, "updated_at": datetime.utcnow()})
+    ref.update({"is_suspended": False, "suspended_at": None, "updated_at": datetime.utcnow()})
     return {"ok": True, "is_suspended": False}
+
+
+@router.post("/organizations/{org_id}/suspend")
+@router.put("/organizations/{org_id}/suspend")
+def suspend_organization(org_id: str, admin: dict = Depends(require_platform_admin), note: Optional[str] = Query(None)):
+    return _suspend_org_impl(org_id, admin, note, get_firestore())
+
+
+@router.post("/organizations/{org_id}/unsuspend")
+@router.put("/organizations/{org_id}/unsuspend")
+def unsuspend_organization(org_id: str, admin: dict = Depends(require_platform_admin)):
+    return _unsuspend_org_impl(org_id, get_firestore())
 
 
 @router.delete("/organizations/{org_id}")
@@ -225,6 +280,20 @@ def delete_organization(
         return {"ok": True, "deleted": "hard"}
     ref.update({"is_deleted": True, "deleted_at": datetime.utcnow(), "updated_at": datetime.utcnow()})
     return {"ok": True, "deleted": "soft"}
+
+
+@router.post("/organizations/bulk-delete")
+def bulk_delete_organizations(body: BulkDeleteOrgsRequest, admin: dict = Depends(require_platform_admin)):
+    db = get_firestore()
+    deleted = 0
+    for org_id in body.org_ids:
+        ref = db.collection("organizations").document(org_id)
+        doc = ref.get()
+        if not doc.exists:
+            continue
+        ref.update({"is_deleted": True, "deleted_at": datetime.utcnow(), "updated_at": datetime.utcnow()})
+        deleted += 1
+    return {"ok": True, "deleted": deleted}
 
 
 @router.post("/organizations/{org_id}/billing/downgrade")

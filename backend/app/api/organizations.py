@@ -39,26 +39,27 @@ def _ensure_unique_slug(db, base_slug: str, exclude_id: Optional[str] = None) ->
 
 @router.get("")
 def list_organizations(user_id: str = Depends(get_current_user_id)):
+    """List organizations the user belongs to (approved) or has pending membership."""
     db = get_firestore()
-    members_ref = db.collection("members")
-    members = members_ref.where("user_id", "==", user_id).where("status", "==", "approved").get()
-
-    org_ids = [m.to_dict().get("organization_id") for m in members]
-    if not org_ids:
-        return []
+    members = list(db.collection("members").where("user_id", "==", user_id).get())
 
     orgs = []
-    for oid in org_ids:
-        if not oid:
+    seen_oids = set()
+    for m in members:
+        md = m.to_dict()
+        oid = md.get("organization_id")
+        if not oid or oid in seen_oids:
             continue
+        seen_oids.add(oid)
         doc = db.collection("organizations").document(oid).get()
-        if doc.exists:
-            d = doc.to_dict()
-            d["id"] = doc.id
-            # Filter soft-deleted
-            if d.get("is_deleted"):
-                continue
-            orgs.append(d)
+        if not doc.exists:
+            continue
+        d = doc.to_dict()
+        if d.get("is_deleted"):
+            continue
+        d["id"] = doc.id
+        d["membership_status"] = md.get("status", "approved")
+        orgs.append(d)
     return orgs
 
 
@@ -118,6 +119,125 @@ def create_organization(req: CreateOrgRequest, user: dict = Depends(get_current_
     db.collection("members").document(member_id).set(member_data)
 
     return {**org_data, "id": org_id}
+
+
+def _public_org_payload(doc) -> dict:
+    """Limited public info for join pages."""
+    d = doc.to_dict()
+    return {
+        "id": doc.id,
+        "name": d.get("name", ""),
+        "description": d.get("description"),
+        "logo": d.get("logo"),
+        "icon_color": d.get("icon_color", "#FFFFFF"),
+        "invite_code": d.get("invite_code", ""),
+    }
+
+
+@router.get("/by-slug/{slug}")
+def get_organization_by_slug(slug: str):
+    """Get organization by public slug (public endpoint for join pages)."""
+    db = get_firestore()
+    slug_clean = (slug or "").strip().lower()
+    if not slug_clean:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    refs = list(db.collection("organizations").where("public_slug", "==", slug_clean).limit(1).get())
+    if not refs or refs[0].to_dict().get("is_deleted"):
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return _public_org_payload(refs[0])
+
+
+@router.get("/by-invite/{invite_code}")
+def get_organization_by_invite_code(invite_code: str):
+    """Get organization by invite code (public endpoint for join pages)."""
+    db = get_firestore()
+    code = (invite_code or "").strip().upper()
+    if not code:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    refs = list(db.collection("organizations").where("invite_code", "==", code).limit(1).get())
+    if not refs or refs[0].to_dict().get("is_deleted"):
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return _public_org_payload(refs[0])
+
+
+def _join_organization(db, org_id: str, user_id: str):
+    """Create or reactivate membership with pending status. Returns (status, detail for error)."""
+    from datetime import datetime
+    org_ref = db.collection("organizations").document(org_id)
+    org_doc = org_ref.get()
+    if not org_doc.exists or org_doc.to_dict().get("is_deleted"):
+        return None, "Organization not found"
+    members = list(
+        db.collection("members")
+        .where("user_id", "==", user_id)
+        .where("organization_id", "==", org_id)
+        .limit(1)
+        .get()
+    )
+    if members:
+        md = members[0].to_dict()
+        status_val = md.get("status", "approved")
+        if status_val == "pending":
+            return "pending", "already_pending"
+        if status_val == "approved" and md.get("approved_at"):
+            return "approved", "already_member"
+        # e.g. rejected or inactive – reactivate as pending
+        member_id = members[0].id
+        db.collection("members").document(member_id).update({
+            "status": "pending",
+            "joined_at": datetime.utcnow(),
+        })
+        return "pending", None
+    # New membership
+    member_id = generate_uuid()
+    now = datetime.utcnow()
+    member_data = {
+        "id": member_id,
+        "user_id": user_id,
+        "organization_id": org_id,
+        "role": "member",
+        "status": "pending",
+        "title": None,
+        "nickname": None,
+        "role_label": None,
+        "allowed_channels": [],
+        "joined_at": now,
+    }
+    db.collection("members").document(member_id).set(member_data)
+    return "pending", None
+
+
+@router.post("/join/{invite_code}")
+def join_organization_by_code(invite_code: str, user_id: str = Depends(get_current_user_id)):
+    """Join an organization using an invite code. New members require approval."""
+    db = get_firestore()
+    code = (invite_code or "").strip().upper()
+    if not code:
+        raise HTTPException(status_code=404, detail="Invalid invite code")
+    refs = list(db.collection("organizations").where("invite_code", "==", code).limit(1).get())
+    if not refs:
+        raise HTTPException(status_code=404, detail="Invalid invite code")
+    org_id = refs[0].id
+    status_val, err = _join_organization(db, org_id, user_id)
+    if err == "already_member":
+        raise HTTPException(status_code=400, detail="Already a member of this organization")
+    if err == "already_pending":
+        raise HTTPException(status_code=400, detail="Your membership is pending approval")
+    return {"status": status_val, "organization_id": org_id}
+
+
+@router.post("/{org_id}/join")
+def join_organization_direct(org_id: str, user_id: str = Depends(get_current_user_id)):
+    """Join an organization by ID (for slug-based join pages)."""
+    db = get_firestore()
+    status_val, err = _join_organization(db, org_id, user_id)
+    if err == "Organization not found":
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if err == "already_member":
+        raise HTTPException(status_code=400, detail="Already a member of this organization")
+    if err == "already_pending":
+        raise HTTPException(status_code=400, detail="Your membership is pending approval")
+    return {"status": status_val, "organization_id": org_id}
 
 
 class UpdateMemberSettingsRequest(BaseModel):

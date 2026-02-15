@@ -9,6 +9,8 @@ import {
   Check,
   AlertTriangle,
   FolderOpen,
+  Link2,
+  ExternalLink,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -31,10 +33,17 @@ interface Template {
   my_document_id?: string
 }
 
+interface GoogleFormLink {
+  id: string
+  title: string
+  form_url: string
+}
+
 export function OrgDocuments() {
   const { orgId } = useParams<{ orgId: string }>()
   const [orgDocs, setOrgDocs] = useState<OrgDoc[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
+  const [googleForms, setGoogleForms] = useState<GoogleFormLink[]>([])
   const [loading, setLoading] = useState(true)
   const [viewingDoc, setViewingDoc] = useState<OrgDoc | null>(null)
   const [uploadModalTemplate, setUploadModalTemplate] = useState<Template | null>(null)
@@ -43,15 +52,18 @@ export function OrgDocuments() {
     if (!orgId) return
     setLoading(true)
     try {
-      const [docsRes, templatesRes] = await Promise.all([
+      const [docsRes, templatesRes, formsRes] = await Promise.all([
         api.get(`/documents/${orgId}`),
         api.get(`/documents/${orgId}/templates`),
+        api.get(`/documents/${orgId}/google-forms`),
       ])
       setOrgDocs(docsRes.data)
       setTemplates(templatesRes.data)
+      setGoogleForms(formsRes.data || [])
     } catch {
       setOrgDocs([])
       setTemplates([])
+      setGoogleForms([])
     } finally {
       setLoading(false)
     }
@@ -120,6 +132,35 @@ export function OrgDocuments() {
               </div>
             )}
           </section>
+
+          {googleForms.length > 0 && (
+            <section>
+              <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
+                <Link2 size={20} />
+                Forms
+              </h3>
+              <div className="space-y-2">
+                {googleForms.map((f) => (
+                  <a
+                    key={f.id}
+                    href={f.form_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between p-4 rounded-lg bg-zinc-900 border border-zinc-700 hover:border-zinc-600 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Link2 className="h-8 w-8 text-zinc-500" />
+                      <span className="font-medium text-white">{f.title}</span>
+                    </div>
+                    <span className="text-zinc-400 group-hover:text-white flex items-center gap-1 text-sm">
+                      <ExternalLink size={16} />
+                      Open form
+                    </span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
 
           <section>
             <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">

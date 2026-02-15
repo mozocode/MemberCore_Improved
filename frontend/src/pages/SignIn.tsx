@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -7,7 +7,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuth } from '@/contexts/AuthContext'
 import { Loader2 } from 'lucide-react'
 
+function safeReturnPath(returnParam: string | null): string | null {
+  if (!returnParam || typeof returnParam !== 'string') return null
+  const path = decodeURIComponent(returnParam).replace(/^\/+/, '/')
+  if (path.startsWith('/org/') || path.startsWith('/join')) return path
+  return null
+}
+
 export function SignIn() {
+  const [searchParams] = useSearchParams()
+  const returnTo = safeReturnPath(searchParams.get('return'))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -21,7 +30,7 @@ export function SignIn() {
     setLoading(true)
     try {
       await signin(email, password)
-      navigate('/user-dashboard')
+      navigate(returnTo || '/user-dashboard')
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string }; status?: number }; message?: string; code?: string }
       const detail = e.response?.data?.detail

@@ -105,7 +105,7 @@ export function OrgMembers() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-white truncate">
-                  {getDisplayName(member.name, member.nickname, { fullNameFallback: true })}
+                  {getDisplayName(member.name, member.nickname)}
                 </p>
               </div>
               <div className="flex items-center gap-2">

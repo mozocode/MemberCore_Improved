@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { Search, Filter, MapPin, Calendar, Sparkles, Loader2 } from 'lucide-react'
 import { DirectoryMap } from '@/components/DirectoryMap'
 import { api } from '@/lib/api'
@@ -49,6 +49,7 @@ const emptyFilters: DirectoryFilters = {
 
 export function OrgDirectory() {
   const { orgId } = useParams<{ orgId: string }>()
+  const navigate = useNavigate()
   const [userOrg, setUserOrg] = useState<Org | null>(null)
   const [events, setEvents] = useState<DirectoryEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -57,7 +58,7 @@ export function OrgDirectory() {
   const [filterModalOpen, setFilterModalOpen] = useState(false)
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list')
 
-  const fetchEvents = useCallback(async () => {
+  const fetchEvents = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     const params = new URLSearchParams()
     if (filters.orgType) params.set('org_type', filters.orgType)
@@ -68,12 +69,13 @@ export function OrgDirectory() {
     if (filters.searchQuery) params.set('search', filters.searchQuery)
     const qs = params.toString()
     try {
-      const { data } = await api.get(`/events/public/directory${qs ? `?${qs}` : ''}`)
-      setEvents(Array.isArray(data) ? data : [])
-    } catch {
-      setEvents([])
+      const { data } = await api.get(`/events/public/directory${qs ? `?${qs}` : ''}`, { signal })
+      if (!signal?.aborted) setEvents(Array.isArray(data) ? data : [])
+    } catch (e) {
+      if (typeof e === 'object' && e !== null && (e as { name?: string }).name === 'CanceledError') return
+      if (!signal?.aborted) setEvents([])
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }, [
     filters.orgType,
@@ -84,11 +86,26 @@ export function OrgDirectory() {
     filters.searchQuery,
   ])
 
+  const filtersReady =
+    !orgId ||
+    !userOrg ||
+    autoFilterApplied ||
+    !(
+      (userOrg?.cultural_identity && userOrg.cultural_identity !== 'none') ||
+      (userOrg?.type === 'Sports Club' && userOrg?.sport_type) ||
+      ['Fraternity', 'Sorority'].includes(userOrg?.type || '')
+    )
+
   useEffect(() => {
+    if (!filtersReady) return
+    const controller = new AbortController()
     const delay = filters.searchQuery ? 300 : 0
-    const t = setTimeout(fetchEvents, delay)
-    return () => clearTimeout(t)
-  }, [fetchEvents])
+    const t = setTimeout(() => fetchEvents(controller.signal), delay)
+    return () => {
+      clearTimeout(t)
+      controller.abort()
+    }
+  }, [filtersReady, fetchEvents])
 
   useEffect(() => {
     if (!orgId) return
@@ -239,6 +256,7 @@ export function OrgDirectory() {
       ) : viewMode === 'map' ? (
         <DirectoryMap
           events={events}
+          onViewDetails={(event) => navigate(`/events/${event.id}`, { state: { fromOrgDirectory: true, orgId } })}
           culturalIdentityLabel={
             filters.culturalIdentity
               ? getIdentityLabel(filters.culturalIdentity)
@@ -271,12 +289,25 @@ export function OrgDirectory() {
                 <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-white">{event.title}</h3>
                   {event.organization && (
-                    <p className="text-sm text-zinc-400 mt-0.5">
-                      {event.organization.name}
-                      {event.organization.type && (
-                        <span className="text-zinc-500"> · {event.organization.type}</span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {event.organization.logo ? (
+                        <img
+                          src={event.organization.logo}
+                          alt=""
+                          className="w-6 h-6 rounded-full object-cover shrink-0"
+                        />
+                      ) : (
+                        <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center shrink-0 text-xs font-medium text-zinc-400">
+                          {event.organization.name?.charAt(0) ?? '?'}
+                        </div>
                       )}
-                    </p>
+                      <p className="text-sm text-zinc-400">
+                        {event.organization.name}
+                        {event.organization.type && (
+                          <span className="text-zinc-500"> · {event.organization.type}</span>
+                        )}
+                      </p>
+                    </div>
                   )}
                   {event.event_date && (
                     <p className="text-sm text-zinc-400 mt-1 flex items-center gap-1">
@@ -298,6 +329,13 @@ export function OrgDirectory() {
                       <span>{event.maybe_count} maybe</span>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/events/${event.id}`, { state: { fromOrgDirectory: true, orgId } })}
+                    className="w-full mt-3 px-3 py-2 bg-white text-black text-sm font-medium rounded-lg hover:bg-zinc-200"
+                  >
+                    View details
+                  </button>
                 </div>
               </div>
             </div>

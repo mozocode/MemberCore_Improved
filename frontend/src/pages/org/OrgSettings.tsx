@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useParams, useNavigate, useLocation, useSearchParams, Link } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { hasPermission, type OrgRole } from '@/lib/permissions'
 import {
@@ -48,10 +48,12 @@ import { SPORTS_LIST } from '@/lib/sports'
 import { compressImageFile } from '@/lib/imageCompression'
 import { getDisplayName } from '@/lib/displayName'
 import { useAuth } from '@/contexts/AuthContext'
+import { Html5Qrcode } from 'html5-qrcode'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import QRCode from 'react-qr-code'
 
 interface SettingOption {
   id: string
@@ -798,6 +800,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
   const [plans, setPlans] = useState<{ id: string; name: string; amount: number; due_date?: string; frequency: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [createModal, setCreateModal] = useState(false)
+  const [editingPlan, setEditingPlan] = useState<{ id: string; name: string; amount: number; due_date?: string; frequency: string } | null>(null)
   const [planName, setPlanName] = useState('')
   const [planAmount, setPlanAmount] = useState('')
   const [planDate, setPlanDate] = useState('')
@@ -870,6 +873,33 @@ function SettingsDues({ orgId }: { orgId: string }) {
     fetchTreasury()
   }, [fetchTreasury])
 
+  const openCreatePlanModal = () => {
+    setEditingPlan(null)
+    setPlanName('')
+    setPlanAmount('')
+    setPlanDate('')
+    setPlanError('')
+    setCreateModal(true)
+  }
+
+  const openEditPlanModal = (p: { id: string; name: string; amount: number; due_date?: string; frequency: string }) => {
+    setEditingPlan(p)
+    setPlanName(p.name)
+    setPlanAmount(String(p.amount))
+    setPlanDate(p.due_date || '')
+    setPlanError('')
+    setCreateModal(true)
+  }
+
+  const closePlanModal = () => {
+    setCreateModal(false)
+    setEditingPlan(null)
+    setPlanName('')
+    setPlanAmount('')
+    setPlanDate('')
+    setPlanError('')
+  }
+
   const handleCreatePlan = async (e: React.FormEvent) => {
     e.preventDefault()
     setPlanError('')
@@ -884,19 +914,25 @@ function SettingsDues({ orgId }: { orgId: string }) {
     }
     setPlanLoading(true)
     try {
-      await api.post(`/dues/${orgId}/plans`, {
-        name: planName.trim(),
-        amount,
-        due_date: planDate || undefined,
-        frequency: 'one_time',
-      })
-      setCreateModal(false)
-      setPlanName('')
-      setPlanAmount('')
-      setPlanDate('')
+      if (editingPlan) {
+        await api.put(`/dues/${orgId}/plans/${editingPlan.id}`, {
+          name: planName.trim(),
+          amount,
+          due_date: planDate || undefined,
+          frequency: editingPlan.frequency || 'one_time',
+        })
+      } else {
+        await api.post(`/dues/${orgId}/plans`, {
+          name: planName.trim(),
+          amount,
+          due_date: planDate || undefined,
+          frequency: 'one_time',
+        })
+      }
+      closePlanModal()
       fetchPlans()
     } catch (err: unknown) {
-      setPlanError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to create plan')
+      setPlanError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (editingPlan ? 'Failed to update plan' : 'Failed to create plan'))
     } finally {
       setPlanLoading(false)
     }
@@ -1039,7 +1075,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
       <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-white">Payment Plans</h3>
-          <Button onClick={() => setCreateModal(true)} className="bg-white text-black hover:bg-zinc-200">
+          <Button onClick={openCreatePlanModal} className="bg-white text-black hover:bg-zinc-200">
             <Plus size={18} />
             <span className="ml-2">Create Plan</span>
           </Button>
@@ -1053,7 +1089,12 @@ function SettingsDues({ orgId }: { orgId: string }) {
             {plans.map((p) => (
               <li key={p.id} className="flex items-center justify-between p-3 rounded-lg bg-zinc-800 border border-zinc-700">
                 <span className="font-medium text-white">{p.name}</span>
-                <span className="text-zinc-400">${p.amount.toFixed(2)}{p.due_date ? ` • Due ${new Date(p.due_date).toLocaleDateString()}` : ''}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-zinc-400">${p.amount.toFixed(2)}{p.due_date ? ` • Due ${new Date(p.due_date).toLocaleDateString()}` : ''}</span>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => openEditPlanModal(p)} className="text-zinc-400 hover:text-white p-1.5" title="Edit plan">
+                    <Edit2 size={16} />
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -1111,7 +1152,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
                           {getDisplayName(m.user_name, m.nickname).charAt(0).toUpperCase()}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-medium text-white truncate">{getDisplayName(m.user_name, m.nickname, { fullNameFallback: true })}</p>
+                          <p className="font-medium text-white truncate">{getDisplayName(m.user_name, m.nickname)}</p>
                           <p className="text-xs text-zinc-500 truncate">{m.title ? `${m.title}` : `$${m.total_paid.toFixed(2)} paid`}</p>
                         </div>
                       </div>
@@ -1158,7 +1199,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
                 >
                   <option value="">Select member</option>
                   {memberStatuses.map((m) => (
-                    <option key={m.member_id} value={m.member_id}>{getDisplayName(m.user_name, m.nickname, { fullNameFallback: true })}</option>
+                    <option key={m.member_id} value={m.member_id}>{getDisplayName(m.user_name, m.nickname)}</option>
                   ))}
                 </select>
               </div>
@@ -1225,11 +1266,11 @@ function SettingsDues({ orgId }: { orgId: string }) {
 
       {createModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setCreateModal(false)} aria-hidden />
+          <div className="absolute inset-0 bg-black/60" onClick={closePlanModal} aria-hidden />
           <div className="relative z-10 w-full max-w-md rounded-2xl bg-zinc-900 border border-zinc-700">
             <div className="flex items-center justify-between p-4 border-b border-zinc-700">
-              <h3 className="text-lg font-semibold text-white">Create Plan</h3>
-              <button type="button" onClick={() => setCreateModal(false)} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400"><X size={20} /></button>
+              <h3 className="text-lg font-semibold text-white">{editingPlan ? 'Edit Plan' : 'Create Plan'}</h3>
+              <button type="button" onClick={closePlanModal} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400"><X size={20} /></button>
             </div>
             <form onSubmit={handleCreatePlan} className="p-4 space-y-4">
               {planError && <div className="text-sm text-red-400 bg-red-500/10 p-3 rounded-lg">{planError}</div>}
@@ -1246,9 +1287,9 @@ function SettingsDues({ orgId }: { orgId: string }) {
                 <Input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} className="mt-1 bg-zinc-800 border-zinc-700" />
               </div>
               <div className="flex gap-2 pt-4">
-                <Button type="button" variant="outline" onClick={() => setCreateModal(false)} className="flex-1 bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700">Cancel</Button>
+                <Button type="button" variant="outline" onClick={closePlanModal} className="flex-1 bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700">Cancel</Button>
                 <Button type="submit" disabled={planLoading} className="flex-1 bg-white text-black hover:bg-zinc-200">
-                  {planLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Create Plan'}
+                  {planLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : editingPlan ? 'Save' : 'Create Plan'}
                 </Button>
               </div>
             </form>
@@ -1277,12 +1318,24 @@ interface TemplateRow {
   submission_count?: number
 }
 
+interface GoogleFormRow {
+  id: string
+  title: string
+  form_url: string
+}
+
 function SettingsDocuments({ orgId }: { orgId: string }) {
   const [orgDocs, setOrgDocs] = useState<OrgDocRow[]>([])
   const [templates, setTemplates] = useState<TemplateRow[]>([])
+  const [, setGoogleForms] = useState<GoogleFormRow[]>([])
   const [loading, setLoading] = useState(true)
   const [createDocModal, setCreateDocModal] = useState(false)
   const [createTemplateModal, setCreateTemplateModal] = useState(false)
+  const [addGoogleFormModal, setAddGoogleFormModal] = useState(false)
+  const [googleFormTitle, setGoogleFormTitle] = useState('')
+  const [googleFormUrl, setGoogleFormUrl] = useState('')
+  const [googleFormSaving, setGoogleFormSaving] = useState(false)
+  const [googleFormError, setGoogleFormError] = useState('')
   const [editingTemplate, setEditingTemplate] = useState<TemplateRow | null>(null)
   const [viewingDoc, setViewingDoc] = useState<OrgDocRow | null>(null)
   const [accessDoc, setAccessDoc] = useState<OrgDocRow | null>(null)
@@ -1295,15 +1348,18 @@ function SettingsDocuments({ orgId }: { orgId: string }) {
     if (!orgId) return
     setLoading(true)
     try {
-      const [docsRes, templatesRes] = await Promise.all([
+      const [docsRes, templatesRes, formsRes] = await Promise.all([
         api.get(`/documents/${orgId}`),
         api.get(`/documents/${orgId}/templates`),
+        api.get(`/documents/${orgId}/google-forms`),
       ])
       setOrgDocs(docsRes.data || [])
       setTemplates(templatesRes.data || [])
+      setGoogleForms(formsRes.data || [])
     } catch {
       setOrgDocs([])
       setTemplates([])
+      setGoogleForms([])
     } finally {
       setLoading(false)
     }
@@ -1374,6 +1430,29 @@ function SettingsDocuments({ orgId }: { orgId: string }) {
       fetchData()
     } catch (e) {
       console.error(e)
+    }
+  }
+
+  const handleAddGoogleForm = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setGoogleFormError('')
+    const title = googleFormTitle.trim()
+    const form_url = googleFormUrl.trim()
+    if (!title || !form_url) {
+      setGoogleFormError('Title and form URL are required.')
+      return
+    }
+    setGoogleFormSaving(true)
+    try {
+      await api.post(`/documents/${orgId}/google-forms`, { title, form_url })
+      setAddGoogleFormModal(false)
+      setGoogleFormTitle('')
+      setGoogleFormUrl('')
+      fetchData()
+    } catch (err: unknown) {
+      setGoogleFormError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to add form.')
+    } finally {
+      setGoogleFormSaving(false)
     }
   }
 
@@ -1474,14 +1553,20 @@ function SettingsDocuments({ orgId }: { orgId: string }) {
       </section>
 
       <section className="rounded-xl bg-zinc-900 border border-zinc-800 p-6">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="font-semibold text-white">Required Documents (Templates)</h3>
-          <Button onClick={() => { setEditingTemplate(null); setCreateTemplateModal(true); }} className="bg-white text-black hover:bg-zinc-200">
-            <Plus size={18} />
-            <span className="ml-2">Add Required Document</span>
-          </Button>
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <h3 className="font-semibold text-white">Required Documents</h3>
+          <div className="flex flex-col gap-2">
+            <Button onClick={() => { setGoogleFormError(''); setGoogleFormTitle(''); setGoogleFormUrl(''); setAddGoogleFormModal(true); }} className="bg-white text-black hover:bg-zinc-200">
+              <Plus size={18} />
+              <span className="ml-2">Add Google Form Link</span>
+            </Button>
+            <Button onClick={() => { setEditingTemplate(null); setCreateTemplateModal(true); }} className="bg-white text-black hover:bg-zinc-200">
+              <Plus size={18} />
+              <span className="ml-2">Add Required Document</span>
+            </Button>
+          </div>
         </div>
-        <p className="text-sm text-zinc-500 mb-4">Define documents that members need to upload.</p>
+        <p className="text-sm text-zinc-500 mb-4">Define documents that members need to upload or fill out.</p>
         {loading ? null : templates.length === 0 ? (
           <div className="text-center py-8">
             <FileText className="h-12 w-12 text-zinc-600 mx-auto mb-3" />
@@ -1530,6 +1615,44 @@ function SettingsDocuments({ orgId }: { orgId: string }) {
           onClose={() => { setCreateTemplateModal(false); setEditingTemplate(null); }}
           onCreated={() => { setCreateTemplateModal(false); setEditingTemplate(null); fetchData(); }}
         />
+      )}
+
+      {addGoogleFormModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setAddGoogleFormModal(false)} aria-hidden />
+          <div className="relative z-10 w-full max-w-md rounded-2xl bg-zinc-900 border border-zinc-700 p-6">
+            <h3 className="text-lg font-semibold text-white mb-2">Add Google Form Link</h3>
+            <p className="text-sm text-zinc-500 mb-4">Paste your Google Form link. It will appear on the Documents page for members to open.</p>
+            <form onSubmit={handleAddGoogleForm} className="space-y-4">
+              {googleFormError && <div className="text-sm text-red-400 bg-red-500/10 p-3 rounded-lg">{googleFormError}</div>}
+              <div>
+                <Label className="text-zinc-300">Title</Label>
+                <Input
+                  value={googleFormTitle}
+                  onChange={(e) => setGoogleFormTitle(e.target.value)}
+                  placeholder="e.g. Event Feedback"
+                  className="mt-1 bg-zinc-800 border-zinc-700 text-white"
+                />
+              </div>
+              <div>
+                <Label className="text-zinc-300">Google Form URL</Label>
+                <Input
+                  value={googleFormUrl}
+                  onChange={(e) => setGoogleFormUrl(e.target.value)}
+                  placeholder="https://docs.google.com/forms/d/..."
+                  type="url"
+                  className="mt-1 bg-zinc-800 border-zinc-700 text-white"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button type="button" variant="outline" className="flex-1 bg-zinc-800 border-zinc-700 text-white" onClick={() => setAddGoogleFormModal(false)}>Cancel</Button>
+                <Button type="submit" className="flex-1 bg-white text-black hover:bg-zinc-200" disabled={googleFormSaving}>
+                  {googleFormSaving ? <Loader2 size={18} className="animate-spin" /> : 'Add Form'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {accessDoc && (
@@ -1701,6 +1824,7 @@ interface EventOption {
 
 interface AttendeeOption {
   ticket_id: string
+  short_code?: string
   user_name: string
   nickname?: string
   amount: number
@@ -1708,6 +1832,8 @@ interface AttendeeOption {
   checked_in: boolean
   checked_in_at?: string
 }
+
+const QR_SCANNER_DIV_ID = 'event-options-qr-scanner'
 
 function SettingsEventOptions({ orgId }: { orgId: string }) {
   const [events, setEvents] = useState<EventOption[]>([])
@@ -1721,6 +1847,8 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
   const [refundModal, setRefundModal] = useState<AttendeeOption | null>(null)
   const [refundReason, setRefundReason] = useState('')
   const [processingRefund, setProcessingRefund] = useState(false)
+  const [scanModalOpen, setScanModalOpen] = useState(false)
+  const qrScannerRef = useRef<InstanceType<typeof Html5Qrcode> | null>(null)
 
   const paidEvents = events.filter((e) => e.is_paid && (e.price ?? 0) > 0).sort((a, b) => {
     const da = a.start_time ? new Date(a.start_time).getTime() : 0
@@ -1768,6 +1896,38 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
       setCheckingIn(false)
     }
   }
+
+  useEffect(() => {
+    if (!scanModalOpen || !selectedEvent) return
+    let cancelled = false
+    const scanner = new Html5Qrcode(QR_SCANNER_DIV_ID)
+    qrScannerRef.current = scanner
+    const onSuccess = (decodedText: string) => {
+      const tid = decodedText.trim()
+      if (!tid) return
+      handleCheckIn(tid)
+      scanner.stop().then(() => {
+        qrScannerRef.current = null
+        setScanModalOpen(false)
+      }).catch(() => {
+        qrScannerRef.current = null
+        setScanModalOpen(false)
+      })
+    }
+    scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 220, height: 220 } },
+      onSuccess,
+      () => {}
+    ).catch(() => {
+      if (!cancelled) setScanModalOpen(false)
+      qrScannerRef.current = null
+    })
+    return () => {
+      cancelled = true
+      qrScannerRef.current?.stop().then(() => { qrScannerRef.current = null }).catch(() => { qrScannerRef.current = null })
+    }
+  }, [scanModalOpen, selectedEvent?.id])
 
   const handleRefund = async () => {
     if (!refundModal) return
@@ -1831,7 +1991,7 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
             <h3 className="font-semibold text-white mb-4">Check-in attendee</h3>
             <div className="flex flex-wrap gap-2">
               <Input
-                placeholder="Enter ticket ID..."
+                placeholder="Enter code (e.g. A3K9X2) or scan QR"
                 value={ticketIdInput}
                 onChange={(e) => setTicketIdInput(e.target.value)}
                 className="flex-1 min-w-[200px] bg-zinc-800 border-zinc-700"
@@ -1840,8 +2000,9 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
                 {checkingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 <span className="ml-2">Check in</span>
               </Button>
-              <Button variant="outline" className="bg-zinc-800 border-zinc-700 text-zinc-400" disabled>
-                Scan QR (coming soon)
+              <Button variant="outline" className="bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-white" disabled={checkingIn} onClick={() => setScanModalOpen(true)}>
+                <QrCode size={18} />
+                <span className="ml-2">Scan QR</span>
               </Button>
             </div>
             {checkInResult && (
@@ -1851,6 +2012,26 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
               </div>
             )}
           </section>
+
+          {scanModalOpen && (
+            <div className="fixed inset-0 z-50 flex flex-col items-center justify-center p-4 bg-black/80">
+              <div className="relative w-full max-w-sm rounded-2xl bg-zinc-900 border border-zinc-700 overflow-hidden">
+                <div className="flex items-center justify-between p-4 border-b border-zinc-700">
+                  <h3 className="text-lg font-semibold text-white">Scan ticket QR code</h3>
+                  <button
+                    type="button"
+                    onClick={() => setScanModalOpen(false)}
+                    className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400"
+                    aria-label="Close"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div id={QR_SCANNER_DIV_ID} className="w-full min-h-[240px] bg-black" />
+                <p className="p-3 text-center text-sm text-zinc-500">Point your camera at the ticket QR code</p>
+              </div>
+            </div>
+          )}
 
           <section className="rounded-xl bg-zinc-900 border border-zinc-800 p-6">
             <div className="flex items-center justify-between mb-4">
@@ -1891,7 +2072,7 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
                           <p className={cn('font-medium', isRefunded ? 'line-through text-zinc-500' : 'text-white')}>
                             {displayName(a)}
                           </p>
-                          <p className="text-xs text-zinc-500 font-mono">{a.ticket_id.slice(0, 8)}...</p>
+                          <p className="text-xs text-zinc-500 font-mono">{a.short_code ?? `${a.ticket_id.slice(0, 8)}…`}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1929,7 +2110,7 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
           <div className="relative z-10 w-full max-w-md rounded-2xl bg-zinc-900 border border-zinc-700 p-6">
             <h3 className="text-lg font-semibold text-white mb-2">Confirm refund</h3>
             <p className="text-zinc-400 text-sm mb-4">Refund ticket for {displayName(refundModal)}?</p>
-            <p className="text-xs text-zinc-500 mb-1">Ticket ID: {refundModal.ticket_id.slice(0, 12)}...</p>
+            <p className="text-xs text-zinc-500 mb-1">{refundModal.short_code ? `Code: ${refundModal.short_code}` : `Ticket: ${refundModal.ticket_id.slice(0, 12)}…`}</p>
             <p className="text-xs text-zinc-500 mb-4">Amount: ${refundModal.amount.toFixed(2)}</p>
             <div className="mb-4">
               <Label className="text-zinc-300 text-sm">Reason (optional)</Label>
@@ -2292,6 +2473,7 @@ function formatEventTime(dateString: string) {
 
 interface MyTicketItem {
   ticket_id: string
+  short_code?: string
   event_id: string
   event_title: string
   event_start_time: string
@@ -2436,13 +2618,13 @@ function SettingsMyTickets({ orgId }: { orgId: string }) {
               {qrTicket.qr_code ? (
                 <img src={qrTicket.qr_code} alt="Ticket QR Code" className="w-48 h-48 object-contain" />
               ) : (
-                <div className="flex flex-col items-center justify-center text-zinc-500 text-sm">
-                  <QrCode className="h-16 w-16 mb-2" />
-                  QR code not available
-                </div>
+                <QRCode value={qrTicket.ticket_id} size={192} level="H" />
               )}
             </div>
-            <p className="text-center text-sm text-zinc-400 mb-4 font-mono">{qrTicket.ticket_id}</p>
+            {qrTicket.short_code ? (
+              <p className="text-center text-lg font-semibold text-white mb-1">Code: {qrTicket.short_code}</p>
+            ) : null}
+            <p className="text-center text-xs text-zinc-500 mb-4 font-mono">{qrTicket.ticket_id.slice(0, 8)}…</p>
             <div className="flex justify-center mb-4">
               <TicketStatusBadge
                 status={qrTicket.status}
@@ -2474,7 +2656,7 @@ function SettingsMyTickets({ orgId }: { orgId: string }) {
 
 function MyTicketCard({
   ticket,
-  orgId: _orgId,
+  orgId,
   onViewQR,
 }: {
   ticket: MyTicketItem
@@ -2499,10 +2681,17 @@ function MyTicketCard({
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <h4 className="font-semibold text-lg text-white truncate">{ticket.event_title}</h4>
+          <h4 className="font-semibold text-lg text-white truncate">
+            <Link to={`/org/${orgId}/tickets/${ticket.ticket_id}`} className="hover:text-zinc-200">
+              {ticket.event_title}
+            </Link>
+          </h4>
           <p className="text-sm text-zinc-400">
             📅 {formatEventDate(ticket.event_start_time)} at {formatEventTime(ticket.event_start_time)}
           </p>
+          {ticket.short_code && (
+            <p className="text-xs text-zinc-500 font-mono mt-0.5">Code: {ticket.short_code}</p>
+          )}
           {ticket.event_location && (
             <p className="text-sm text-zinc-400">📍 {ticket.event_location}</p>
           )}
@@ -2813,7 +3002,7 @@ function SettingsMembers({ orgId }: { orgId: string }) {
         ) : (
           <ul className="space-y-2">
             {filteredApproved.map((member) => {
-              const displayName = getDisplayName(member.name, member.nickname, { fullNameFallback: true })
+              const displayName = getDisplayName(member.name, member.nickname)
               const displayWithTitle = member.title ? `${displayName} (${member.title})` : displayName
               const canEdit = canChangeRole(member)
               const canRemove = canRemoveMember(member)
@@ -2877,7 +3066,7 @@ function SettingsMembers({ orgId }: { orgId: string }) {
           <div className="relative z-10 w-full max-w-md rounded-2xl bg-zinc-900 border border-zinc-700 p-6">
             <h3 className="text-lg font-semibold text-white mb-2">Remove member</h3>
             <p className="text-zinc-400 text-sm mb-4">
-              Remove {getDisplayName(removeModal.name, removeModal.nickname, { fullNameFallback: true })} from this organization? They will lose access immediately. This cannot be undone.
+              Remove {getDisplayName(removeModal.name, removeModal.nickname)} from this organization? They will lose access immediately. This cannot be undone.
             </p>
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => setRemoveModal(null)} className="flex-1 bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700">

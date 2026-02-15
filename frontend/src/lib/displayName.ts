@@ -4,8 +4,8 @@ export interface GetDisplayNameOptions {
 }
 
 /**
- * Resolve display name: nickname (in this org) > first name or full name > "Unknown".
- * Used in chat, member directory, events, polls, etc.
+ * Resolve display name: nickname (in this org) if set, else first name only. Never full name.
+ * Used in chat, member directory, events, polls, messages, etc.
  */
 export function getDisplayName(
   realName: string | null | undefined,

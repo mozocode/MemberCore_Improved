@@ -4,6 +4,9 @@
   "description": "MemberCore monorepo – run deploy from here so Firebase uses this folder's .firebaserc (membercore-f0b3f)",
   "scripts": {
     "deploy:hosting": "firebase use membercore-f0b3f && firebase deploy --only hosting",
+    "deploy:live": "bash scripts/deploy-live.sh",
+    "deploy:backend": "bash scripts/deploy-backend-live.sh",
+    "deploy:all": "bash scripts/deploy-all-live.sh",
     "firebase:use": "firebase use membercore-f0b3f"
   }
 }

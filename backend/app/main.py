@@ -1,12 +1,18 @@
 import logging
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
-load_dotenv()  # so GOOGLE_APPLICATION_CREDENTIALS etc. are in os.environ
+
+# Load .env from cwd and from backend/ so it works when run from repo root or backend/
+load_dotenv()
+_backend_dir = Path(__file__).resolve().parent.parent
+load_dotenv(_backend_dir / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, organizations, events, members, org_events, polls, documents, dues, payments, chat, analytics
+from app.api import auth, organizations, events, members, org_events, polls, documents, dues, payments, chat, analytics, dm
 from app.api.admin.router import admin_router
 
 logger = logging.getLogger(__name__)
@@ -44,6 +50,7 @@ app.include_router(documents.router, prefix="/api/documents", tags=["documents"]
 app.include_router(dues.router, prefix="/api/dues", tags=["dues"])
 app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(dm.router, prefix="/api/organizations", tags=["dm"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(admin_router, prefix="/api", tags=["admin"])
 

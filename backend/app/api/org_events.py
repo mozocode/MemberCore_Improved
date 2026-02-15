@@ -1,8 +1,11 @@
 """Organization events API - CRUD, RSVP. Requires auth."""
+import csv
+import io
 from datetime import datetime, timezone
 from typing import Optional, List, Any
 
 from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.db.firebase import get_firestore
@@ -10,6 +13,44 @@ from app.core.security import get_current_user_id, get_current_user, generate_uu
 from app.api.chat import post_to_general_chat, broadcast_new_message
 
 router = APIRouter()
+
+
+def _get_display_name_for_org_user(db, org_id: str, user_id: Optional[str]) -> tuple[str, str]:
+    """Return (display_name, initial) for a user in this org: nickname if set, else first name."""
+    if not user_id:
+        return ("Unknown", "?")
+    user_doc = db.collection("users").document(user_id).get()
+    ud = user_doc.to_dict() if user_doc.exists else {}
+    full_name = (ud.get("name") or ud.get("email") or "").strip()
+    first_name = full_name.split()[0] if full_name else "Unknown"
+    members = list(
+        db.collection("members")
+        .where("user_id", "==", user_id)
+        .where("organization_id", "==", org_id)
+        .where("status", "==", "approved")
+        .limit(1)
+        .get()
+    )
+    nickname = (members[0].to_dict().get("nickname") or "").strip() if members else ""
+    display = nickname if nickname else first_name
+    initial = (display or "?")[0].upper()
+    return (display, initial)
+
+
+def _get_host_for_event(db, org_id: str, created_by: Optional[str]) -> dict:
+    """Return host dict: name, avatar, initial (nickname or first name)."""
+    if not created_by:
+        return {"name": "Host", "avatar": None, "initial": "H"}
+    user_doc = db.collection("users").document(created_by).get()
+    if not user_doc.exists:
+        return {"name": "Host", "avatar": None, "initial": "H"}
+    ud = user_doc.to_dict()
+    display_name, initial = _get_display_name_for_org_user(db, org_id, created_by)
+    return {
+        "name": display_name,
+        "avatar": ud.get("avatar"),
+        "initial": initial,
+    }
 
 
 def _serialize_dt(v: Any) -> Any:
@@ -28,11 +69,10 @@ def _post_event_to_chat(db, org_id: str, user_id: str, event: dict, is_update: b
             db, org_id, user_id, "text", content
         )
         return channel_id, msg_doc
-    user_doc = db.collection("users").document(event.get("created_by") or user_id).get()
+    created_by = event.get("created_by") or user_id
+    host_name, host_initial = _get_display_name_for_org_user(db, org_id, created_by)
+    user_doc = db.collection("users").document(created_by).get()
     creator = user_doc.to_dict() if user_doc.exists else {}
-    name = (creator.get("name") or "Host").strip()
-    first_name = name.split()[0] if name else "Host"
-    initial = (name or "H")[0].upper()
     event_data = {
         "id": event.get("id"),
         "title": event.get("title"),
@@ -45,9 +85,9 @@ def _post_event_to_chat(db, org_id: str, user_id: str, event: dict, is_update: b
         "price": event.get("price"),
         "event_type": event.get("event_type"),
         "host": {
-            "name": first_name,
+            "name": host_name,
             "avatar": creator.get("avatar"),
-            "initial": initial,
+            "initial": host_initial,
         },
     }
     content = f"📅 New Event: {event.get('title', '')}"
@@ -154,8 +194,9 @@ def list_org_events(
     for e in events:
         del e["_sort_date"]
 
-    # Enrich with RSVP counts and user's RSVP
+    # Enrich with host, RSVP counts and user's RSVP
     for event in events:
+        event["host"] = _get_host_for_event(db, org_id, event.get("created_by"))
         rsvps = list(
             db.collection("event_rsvps").where("event_id", "==", event["id"]).stream()
         )
@@ -164,6 +205,9 @@ def list_org_events(
             "maybe": sum(1 for r in rsvps if r.to_dict().get("status") == "maybe"),
             "no": sum(1 for r in rsvps if r.to_dict().get("status") == "no"),
         }
+        event["attending_count"] = (
+            event["rsvp_counts"]["yes"] + event["rsvp_counts"]["maybe"]
+        )
         my_rsvp = next(
             (r for r in rsvps if r.to_dict().get("user_id") == user_id),
             None,
@@ -251,23 +295,27 @@ def get_event(
     my_rsvp = next((r for r in rsvps if r.to_dict().get("user_id") == user_id), None)
     ed["my_rsvp"] = my_rsvp.to_dict().get("status") if my_rsvp else None
 
-    # Attendees
+    # Host (creator)
+    ed["host"] = _get_host_for_event(db, org_id, ed.get("created_by"))
+
+    # Attendees (display name = nickname or first name)
     attendees = {"yes": [], "maybe": [], "no": []}
     for r in rsvps:
         rd = r.to_dict()
         uid = rd.get("user_id")
         st = rd.get("status")
         if uid and st in attendees:
+            display_name, initial = _get_display_name_for_org_user(db, org_id, uid)
             user_doc = db.collection("users").document(uid).get()
-            if user_doc.exists:
-                ud = user_doc.to_dict()
-                attendees[st].append({
-                    "user_id": uid,
-                    "name": ud.get("name") or ud.get("email") or "Unknown",
-                    "initial": (ud.get("name") or "?")[0].upper(),
-                    "avatar": ud.get("avatar"),
-                })
+            ud = user_doc.to_dict() if user_doc.exists else {}
+            attendees[st].append({
+                "user_id": uid,
+                "name": display_name,
+                "initial": initial,
+                "avatar": ud.get("avatar"),
+            })
     ed["attendees"] = attendees
+    ed["attending_count"] = ed["rsvp_counts"]["yes"] + ed["rsvp_counts"]["maybe"]
 
     return ed
 
@@ -303,7 +351,7 @@ def update_event(
             detail="Only admins or the event creator can edit this event",
         )
 
-    up = {k: v for k, v in req.dict().items() if v is not None}
+    up = {k: v for k, v in req.model_dump().items() if v is not None}
     if up:
         ref.update(up)
 
@@ -410,3 +458,50 @@ def cancel_rsvp(
         db.collection("event_rsvps").document(r.id).delete()
 
     return {"ok": True}
+
+
+@router.get("/{org_id}/{event_id}/export/csv")
+def export_event_attendees_csv(
+    org_id: str,
+    event_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Export attendees as CSV. Admin or owner only."""
+    db = get_firestore()
+    role = _require_org_member(db, org_id, user["id"])
+    _require_admin_or_owner(role)
+
+    doc = db.collection("events").document(event_id).get()
+    if not doc.exists or doc.to_dict().get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="Event not found")
+    event_title = doc.to_dict().get("title", "Event")
+
+    rsvps = list(db.collection("event_rsvps").where("event_id", "==", event_id).stream())
+    rows = []
+    for r in rsvps:
+        rd = r.to_dict()
+        uid = rd.get("user_id")
+        status = rd.get("status", "")
+        if not uid:
+            continue
+        user_doc = db.collection("users").document(uid).get()
+        email = ""
+        name = "Unknown"
+        if user_doc.exists:
+            ud = user_doc.to_dict()
+            email = ud.get("email") or ""
+            name = ud.get("name") or ud.get("email") or "Unknown"
+        rows.append({"name": name, "email": email, "status": status})
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=["name", "email", "status"])
+    writer.writeheader()
+    writer.writerows(rows)
+    csv_content = buf.getvalue()
+
+    filename = f"attendees-{event_id[:8]}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
