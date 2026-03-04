@@ -207,8 +207,8 @@ export function JoinOrganization({ slug: slugProp }: JoinOrganizationProps = {})
         <div className="space-y-4">
           {membershipPending ? (
             <>
-              <div className="bg-orange-500/20 border border-orange-500/30 rounded-lg p-4 text-center">
-                <p className="text-orange-400 font-medium">Your membership is pending approval</p>
+              <div className="bg-brand-orange/20 border border-brand-orange/30 rounded-lg p-4 text-center">
+                <p className="text-brand-orange font-medium">Your membership is pending approval</p>
                 <p className="text-gray-400 text-sm mt-2">
                   The organization owner will review your request. You&apos;ll be notified once approved.
                 </p>

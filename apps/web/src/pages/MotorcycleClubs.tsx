@@ -300,6 +300,7 @@ export default function MotorcycleClubs() {
           <div className="flex gap-6">
             <Link to="/directory" className="text-sm text-zinc-400 hover:text-white">Directory</Link>
             <Link to="/" className="text-sm text-zinc-400 hover:text-white">Home</Link>
+            <Link to="/support" className="text-sm text-zinc-400 hover:text-white">Support</Link>
             <Link to="/privacy" className="text-sm text-zinc-400 hover:text-white">Privacy</Link>
             <Link to="/signin" className="text-sm text-zinc-400 hover:text-white">Sign In</Link>
           </div>

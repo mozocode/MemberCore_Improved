@@ -21,9 +21,9 @@ import {
 } from 'lucide-react'
 
 const CANONICAL_URL = 'https://membercore.io/compare/wild-apricot'
-const ACCENT = 'text-[#FF8C00]'
-const ACCENT_BG = 'bg-[#FF8C00]'
-const ACCENT_BORDER = 'border-[#FF8C00]'
+const ACCENT = 'text-[#FF6A00]'
+const ACCENT_BG = 'bg-[#FF6A00]'
+const ACCENT_BORDER = 'border-[#FF6A00]'
 
 function Section({
   children,
@@ -252,7 +252,7 @@ export default function CompareWildApricot() {
               {FEATURE_ROWS.map((row) => (
                 <tr
                   key={row.feature}
-                  className={`border-b border-white/[0.06] ${row.highlight ? 'bg-[#FF8C00]/5' : ''}`}
+                  className={`border-b border-white/[0.06] ${row.highlight ? 'bg-[#FF6A00]/5' : ''}`}
                 >
                   <td className="py-3 px-4 text-zinc-200 font-medium">{row.feature}</td>
                   <td className="py-3 px-4">
@@ -384,6 +384,9 @@ export default function CompareWildApricot() {
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-zinc-500 text-sm">© {new Date().getFullYear()} MemberCore</p>
           <div className="flex gap-6">
+            <Link to="/support" className="text-zinc-500 hover:text-white text-sm">
+              Support
+            </Link>
             <Link to="/privacy" className="text-zinc-500 hover:text-white text-sm">
               Privacy
             </Link>

@@ -25,6 +25,7 @@ const linking: LinkingOptions<any> = {
           WildApricotCompare: 'compare/wild-apricot',
           Nonprofits: 'nonprofits',
           SportsClubs: 'sports-clubs',
+          Support: 'support',
         },
       },
       OrgSelector: 'orgs',

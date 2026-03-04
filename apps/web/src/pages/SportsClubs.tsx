@@ -431,7 +431,7 @@ export default function SportsClubs() {
             <Link to="/" className="text-zinc-500 hover:text-white text-sm">Home</Link>
             <span className="text-zinc-500 text-sm">Features</span>
             <span className="text-zinc-500 text-sm">Pricing</span>
-            <span className="text-zinc-500 text-sm">Support</span>
+            <Link to="/support" className="text-zinc-500 hover:text-white text-sm">Support</Link>
             <a href="/terms" className="text-zinc-500 hover:text-white text-sm">Terms</a>
             <Link to="/privacy" className="text-zinc-500 hover:text-white text-sm">Privacy</Link>
           </div>

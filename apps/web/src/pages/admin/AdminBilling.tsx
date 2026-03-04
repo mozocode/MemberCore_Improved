@@ -20,7 +20,7 @@ function StatusBadge({ status }: { status?: string }) {
     s === 'active' ? 'text-green-400' :
     s === 'trial' ? 'text-blue-400' :
     s === 'exempt' ? 'text-amber-400' :
-    s === 'past_due' ? 'text-orange-400' :
+    s === 'past_due' ? 'text-brand-orange' :
     s === 'canceled' || s === 'inactive' ? 'text-red-400' :
     'text-gray-400'
   const label = s === 'past_due' ? 'Past due' : s.charAt(0).toUpperCase() + s.slice(1)

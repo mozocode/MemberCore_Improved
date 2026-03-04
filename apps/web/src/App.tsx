@@ -36,6 +36,7 @@ const MotorcycleClubs = lazy(() => import('@/pages/MotorcycleClubs').then((m) =>
 const CompareWildApricot = lazy(() => import('@/pages/CompareWildApricot').then((m) => ({ default: m.default })))
 const Nonprofits = lazy(() => import('@/pages/Nonprofits').then((m) => ({ default: m.default })))
 const SportsClubs = lazy(() => import('@/pages/SportsClubs').then((m) => ({ default: m.default })))
+const Support = lazy(() => import('@/pages/Support').then((m) => ({ default: m.default })))
 const AdminOverview = lazy(() => import('@/pages/admin/AdminOverview').then((m) => ({ default: m.default })))
 const AdminGrowth = lazy(() => import('@/pages/admin/AdminGrowth').then((m) => ({ default: m.default })))
 const AdminActivation = lazy(() => import('@/pages/admin/AdminActivation').then((m) => ({ default: m.default })))
@@ -138,6 +139,17 @@ function AppRoutes() {
       </Suspense>
     )
   }
+  // Support page
+  if (pathname === '/support' || pathname === '/support/') {
+    if (pathname.endsWith('/')) {
+      return <Navigate to="/support" replace />
+    }
+    return (
+      <Suspense fallback={<PageSkeleton />}>
+        <Support />
+      </Suspense>
+    )
+  }
   return (
     <Suspense fallback={<PageSkeleton />}>
     <Routes>
@@ -173,6 +185,8 @@ function AppRoutes() {
       <Route path="/nonprofits/" element={<Navigate to="/nonprofits" replace />} />
       <Route path="/sports-clubs" element={<SportsClubs />} />
       <Route path="/sports-clubs/" element={<Navigate to="/sports-clubs" replace />} />
+      <Route path="/support" element={<Support />} />
+      <Route path="/support/" element={<Navigate to="/support" replace />} />
       <Route path="/directory" element={<PublicDirectory />} />
       <Route path="/events/:eventId/my-ticket" element={<PublicMyTicket />} />
       <Route path="/events/:eventId" element={<PublicEventDetail />} />

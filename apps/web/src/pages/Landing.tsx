@@ -521,26 +521,38 @@ export function Landing() {
         </div>
       </Section>
 
-      {/* Footer */}
+      {/* Footer — links to created pages only */}
       <footer className="border-t border-zinc-800 py-8 px-6">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-sm text-zinc-500">MemberCore © 2026</p>
           <div className="flex flex-wrap justify-center gap-6">
-            <a href="#features" className="text-sm text-zinc-400 hover:text-white">
-              Product
-            </a>
-            <a href="#pricing" className="text-sm text-zinc-400 hover:text-white">
-              Pricing
-            </a>
-            <a href="#built-for" className="text-sm text-zinc-400 hover:text-white">
-              Who's it for
-            </a>
+            <Link to="/association-management-software" className="text-sm text-zinc-400 hover:text-white">
+              Association Management
+            </Link>
+            <Link to="/motorcycle-clubs" className="text-sm text-zinc-400 hover:text-white">
+              Motorcycle Clubs
+            </Link>
+            <Link to="/compare/wild-apricot" className="text-sm text-zinc-400 hover:text-white">
+              Compare Wild Apricot
+            </Link>
+            <Link to="/nonprofits" className="text-sm text-zinc-400 hover:text-white">
+              Nonprofits
+            </Link>
+            <Link to="/sports-clubs" className="text-sm text-zinc-400 hover:text-white">
+              Sports Clubs
+            </Link>
+            <Link to="/support" className="text-sm text-zinc-400 hover:text-white">
+              Support
+            </Link>
             <Link to="/privacy" className="text-sm text-zinc-400 hover:text-white">
               Privacy
             </Link>
-            <a href="#" className="text-sm text-zinc-400 hover:text-white">
+            <a href="/terms" className="text-sm text-zinc-400 hover:text-white">
               Terms
             </a>
+            <Link to="/support" className="text-sm text-zinc-400 hover:text-white">
+              Contact
+            </Link>
           </div>
         </div>
       </footer>

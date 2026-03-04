@@ -19,9 +19,9 @@ import {
 const CANONICAL_URL = 'https://membercore.io/association-management-software'
 const BOOK_AUDIT_URL = '#book-audit'
 
-const ORANGE = 'text-[#FF8C00]' // accent from design
-const ORANGE_BG = 'bg-[#FF8C00]'
-const ORANGE_BORDER = 'border-[#FF8C00]'
+const ORANGE = 'text-[#FF6A00]' // accent from design
+const ORANGE_BG = 'bg-[#FF6A00]'
+const ORANGE_BORDER = 'border-[#FF6A00]'
 
 function Section({
   children,
@@ -107,7 +107,7 @@ export default function AssociationManagementSoftware() {
             <Button
               size="lg"
               variant="outline"
-              className={`border-2 ${ORANGE_BORDER} bg-transparent ${ORANGE} hover:bg-[#FF8C00]/10 px-8 py-6 text-lg rounded-lg w-full sm:w-auto justify-center`}
+              className={`border-2 ${ORANGE_BORDER} bg-transparent ${ORANGE} hover:bg-[#FF6A00]/10 px-8 py-6 text-lg rounded-lg w-full sm:w-auto justify-center`}
             >
               Start a 30-Day Free Trial
             </Button>
@@ -434,7 +434,7 @@ export default function AssociationManagementSoftware() {
             <Button
               size="lg"
               variant="outline"
-              className={`border-2 ${ORANGE_BORDER} bg-transparent ${ORANGE} hover:bg-[#FF8C00]/10 px-8 py-6 text-lg rounded-lg w-full sm:w-auto`}
+              className={`border-2 ${ORANGE_BORDER} bg-transparent ${ORANGE} hover:bg-[#FF6A00]/10 px-8 py-6 text-lg rounded-lg w-full sm:w-auto`}
             >
               Start a 30-Day Free Trial
             </Button>
@@ -453,9 +453,9 @@ export default function AssociationManagementSoftware() {
             <Link to="/" className="text-sm text-zinc-400 hover:text-white">
               Terms
             </Link>
-            <a href="mailto:support@membercore.io" className="text-sm text-zinc-400 hover:text-white">
+            <Link to="/support" className="text-sm text-zinc-400 hover:text-white">
               Support
-            </a>
+            </Link>
           </div>
         </div>
       </footer>

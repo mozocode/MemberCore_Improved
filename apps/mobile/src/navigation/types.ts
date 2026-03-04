@@ -40,6 +40,7 @@ export type AuthStackParamList = {
   WildApricotCompare: undefined
   Nonprofits: undefined
   SportsClubs: undefined
+  Support: undefined
 }
 
 export type RootStackScreenProps<T extends keyof RootStackParamList> =

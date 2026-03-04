@@ -38,7 +38,7 @@ export default {
           foreground: 'hsl(var(--card-foreground))',
         },
         brand: {
-          orange: '#FF4D00',
+          orange: '#FF6A00',
           teal: '#14B8A6',
         },
       },

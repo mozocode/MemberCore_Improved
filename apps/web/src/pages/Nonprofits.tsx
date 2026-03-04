@@ -421,10 +421,11 @@ export default function Nonprofits() {
             <p className="text-zinc-500 text-sm">MemberCore © 2026</p>
           </div>
           <div className="flex gap-6">
+            <Link to="/support" className="text-zinc-500 hover:text-white text-sm">Support</Link>
             <Link to="/privacy" className="text-zinc-500 hover:text-white text-sm">Privacy</Link>
             <a href="/terms" className="text-zinc-500 hover:text-white text-sm">Terms</a>
-            <span className="text-zinc-500 text-sm">Who It&apos;s For</span>
-            <span className="text-zinc-500 text-sm">Contact</span>
+            <a href="/#built-for" className="text-zinc-500 hover:text-white text-sm">Who It&apos;s For</a>
+            <Link to="/support" className="text-zinc-500 hover:text-white text-sm">Contact</Link>
           </div>
         </div>
       </footer>
