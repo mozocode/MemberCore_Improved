@@ -22,7 +22,7 @@ import { Feather } from '@expo/vector-icons'
 import { organizationService } from '@membercore/services'
 import { getApi } from '@membercore/services'
 import type { RootStackParamList } from '../navigation/types'
-import { colors } from '../theme'
+import { colors, MIN_TOUCH_TARGET } from '../theme'
 import { useAuth } from '../contexts/AuthContext'
 
 interface Org {
@@ -299,13 +299,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background },
 
-  // Nav — web: px-4 py-4 border-b border-zinc-800
   nav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    minHeight: MIN_TOUCH_TARGET,
     borderBottomWidth: 1,
     borderBottomColor: '#27272a',
   },
@@ -332,11 +332,10 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
-  // web: px-4 py-3 min-h-[44px]
   dropdownItem: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    minHeight: 44,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     borderBottomWidth: 1,
     borderBottomColor: '#3f3f46',
@@ -359,13 +358,13 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
 
-  // Card — web: border-zinc-800 rounded-lg, CardHeader gap-4 p-6
   card: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#18181b',
-    borderRadius: 8,
-    padding: 16,
+    borderRadius: 10,
+    padding: 20,
+    minHeight: MIN_TOUCH_TARGET,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: '#27272a',

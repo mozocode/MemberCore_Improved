@@ -49,11 +49,20 @@
     min-height: 100%;
   }
 
-  /* Mobile: ensure tap targets are at least 44px tall for accessibility */
+  /* Mobile: larger tap targets (56px) for easier pressing */
   @media (max-width: 768px) {
     button:not(.no-min-touch),
     a[role="button"] {
-      min-height: 44px;
+      min-height: 56px;
+      padding-top: 14px;
+      padding-bottom: 14px;
+    }
+    /* Nav and list rows: taller tap area */
+    [data-drawer-nav-item],
+    [data-mobile-nav-item] {
+      min-height: 56px;
+      padding-top: 18px;
+      padding-bottom: 18px;
     }
   }
 }

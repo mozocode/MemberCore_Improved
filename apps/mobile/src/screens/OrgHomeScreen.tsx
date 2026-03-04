@@ -14,7 +14,7 @@ import { useNavigation } from '@react-navigation/native'
 import type { DrawerNavigationProp } from '@react-navigation/drawer'
 import { Feather } from '@expo/vector-icons'
 import { organizationService, getApi } from '@membercore/services'
-import { colors } from '../theme'
+import { colors, MIN_TOUCH_TARGET } from '../theme'
 
 interface Org {
   id: string
@@ -274,28 +274,29 @@ const styles = StyleSheet.create({
     marginTop: 12,
     backgroundColor: '#ffffff',
     borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
     alignSelf: 'flex-start',
   },
   goProText: { color: '#000000', fontSize: 14, fontWeight: '600' },
 
-  // Nav cards — web: space-y-3
-  navCards: { gap: 12 },
+  navCards: { gap: 14 },
   navCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    padding: 16,
+    gap: 14,
+    padding: 20,
+    minHeight: MIN_TOUCH_TARGET,
     borderRadius: 12,
     backgroundColor: '#18181b',
     borderWidth: 1,
     borderColor: '#27272a',
   },
-  // web: h-12 w-12 rounded-lg
   navIconBox: {
-    width: 48,
-    height: 48,
+    width: 52,
+    height: 52,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',

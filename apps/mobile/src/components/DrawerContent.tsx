@@ -14,6 +14,7 @@ import { useNavigation } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { organizationService, getApi } from '@membercore/services'
 import type { RootStackParamList, OrgDrawerParamList } from '../navigation/types'
+import { MIN_TOUCH_TARGET } from '../theme/spacing'
 
 interface Org {
   id: string
@@ -178,73 +179,75 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
-  // Close button row — matches web: py-3 px-4 border-b
+  // Close button row — larger touch target
   backRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    minHeight: MIN_TOUCH_TARGET,
     borderBottomWidth: 1,
     borderBottomColor: '#27272a',
   },
   backToOrgs: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    minHeight: 44,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
   },
   backText: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#a1a1aa',
   },
-  // Org info — matches web: px-4 py-6 border-b
+  // Org info — more padding, taller block
   orgInfo: {
-    paddingHorizontal: 16,
-    paddingVertical: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 28,
     borderBottomWidth: 1,
     borderBottomColor: '#27272a',
   },
   orgRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 14,
   },
   orgLogo: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
   },
   orgLogoPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
   },
   orgInitial: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
   },
   orgTextBox: { flex: 1, minWidth: 0 },
   orgName: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
     color: '#ffffff',
   },
   orgLocation: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#a1a1aa',
-    marginTop: 2,
+    marginTop: 4,
   },
-  // Nav items — matches web: w-full flex items-center gap-3 px-4 py-4
-  nav: { flex: 1, paddingVertical: 8 },
+  // Nav items — taller rows for easier tapping
+  nav: { flex: 1, paddingVertical: 12 },
   navItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    minHeight: 44,
+    gap: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    minHeight: MIN_TOUCH_TARGET,
   },
   navItemActive: {
     backgroundColor: '#27272a',

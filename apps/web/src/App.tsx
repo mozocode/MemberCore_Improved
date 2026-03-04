@@ -60,7 +60,7 @@ function ScrollToTop() {
   return null
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedRoute({ children }: { children?: React.ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) {
     return (

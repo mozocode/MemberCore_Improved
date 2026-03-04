@@ -88,22 +88,22 @@ export function OrganizationSidebar({
       )}
     >
       {isMobile && onClose ? (
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
+        <div className="flex items-center justify-between px-4 py-4 min-h-[56px] border-b border-zinc-800 shrink-0">
           <button
             data-testid="back-to-orgs-btn"
             type="button"
             onClick={() => handleNav('/user-dashboard')}
-            className="text-sm text-zinc-400 hover:text-white min-h-[44px] min-w-[44px] -ml-2 pl-2 pr-2 flex items-center"
+            className="text-base text-zinc-400 hover:text-white min-h-[56px] min-w-[56px] -ml-2 pl-2 pr-2 flex items-center"
           >
             Back to Organizations
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="p-3 text-zinc-400 hover:text-white rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center"
+            className="p-4 text-zinc-400 hover:text-white rounded-lg min-h-[56px] min-w-[56px] flex items-center justify-center"
             aria-label="Close menu"
           >
-            <X size={20} />
+            <X size={22} />
           </button>
         </div>
       ) : (
@@ -111,7 +111,7 @@ export function OrganizationSidebar({
           data-testid="back-to-orgs-btn"
           type="button"
           onClick={() => handleNav('/user-dashboard')}
-          className="flex items-center gap-2 px-4 py-4 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors min-h-[44px]"
+          className="flex items-center gap-2 px-4 py-4 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors min-h-[56px]"
         >
           <Home size={20} />
           <span>Back to Organizations</span>
@@ -159,11 +159,12 @@ export function OrganizationSidebar({
             <button
               key={item.id}
               data-testid={`nav-${item.id}`}
+              data-mobile-nav-item
               type="button"
               onClick={() => handleNav(item.route)}
               className={cn(
-                'w-full flex items-center gap-3 px-4 min-h-[44px] transition-colors',
-                isMobile ? 'py-4 text-lg' : 'py-3 text-base',
+                'w-full flex items-center gap-3 px-4 min-h-[56px] transition-colors',
+                isMobile ? 'py-5 text-lg' : 'py-4 text-base',
                 isActive
                   ? 'bg-zinc-800 text-white'
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50',

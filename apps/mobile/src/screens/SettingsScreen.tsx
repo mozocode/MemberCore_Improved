@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { getApi } from '@membercore/services'
 import type { OrgDrawerScreenProps, RootStackParamList } from '../navigation/types'
+import { MIN_TOUCH_TARGET } from '../theme'
 
 type SettingsNav = NativeStackNavigationProp<RootStackParamList>
 
@@ -94,27 +95,28 @@ export function SettingsScreen({ route }: OrgDrawerScreenProps<'Settings'>) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
-  content: { padding: 16, paddingBottom: 48 },
+  content: { padding: 20, paddingBottom: 48 },
   card: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     backgroundColor: '#18181b',
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    padding: 20,
+    minHeight: MIN_TOUCH_TARGET,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: 'rgba(39,39,42,0.8)',
-    gap: 12,
+    gap: 14,
   },
   iconBox: {
-    width: 48,
-    height: 48,
+    width: 52,
+    height: 52,
     borderRadius: 10,
     backgroundColor: '#27272a',
     justifyContent: 'center',
     alignItems: 'center',
   },
   cardInfo: { flex: 1, minWidth: 0 },
-  cardTitle: { fontSize: 15, fontWeight: '600', color: '#ffffff' },
-  cardDesc: { fontSize: 13, color: '#71717a', marginTop: 2, lineHeight: 18 },
+  cardTitle: { fontSize: 16, fontWeight: '600', color: '#ffffff' },
+  cardDesc: { fontSize: 14, color: '#71717a', marginTop: 2, lineHeight: 20 },
 })

@@ -1,3 +1,6 @@
+/** Minimum touch target height (px) for tap areas — Apple HIG suggests 44; we use 56 for easier pressing. */
+export const MIN_TOUCH_TARGET = 56
+
 export const spacing = {
   xs: 4,
   sm: 8,
