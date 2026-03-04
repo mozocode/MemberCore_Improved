@@ -5,6 +5,7 @@ import { SignInScreen } from '../screens/SignInScreen'
 import { SignUpScreen } from '../screens/SignUpScreen'
 import { WildApricotComparisonScreen } from '../screens/WildApricotComparisonScreen'
 import { NonprofitScreen } from '../screens/NonprofitScreen'
+import { SportsClubsScreen } from '../screens/SportsClubsScreen'
 import type { AuthStackParamList } from './types'
 import { colors } from '../theme'
 
@@ -32,6 +33,11 @@ export function AuthStack() {
       <Stack.Screen
         name="Nonprofits"
         component={NonprofitScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="SportsClubs"
+        component={SportsClubsScreen}
         options={{ headerShown: false }}
       />
     </Stack.Navigator>
