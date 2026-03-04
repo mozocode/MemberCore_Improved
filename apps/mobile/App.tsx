@@ -16,6 +16,14 @@ const linking: LinkingOptions<any> = {
   prefixes: [prefix, 'membercore://'],
   config: {
     screens: {
+      Auth: {
+        path: '',
+        screens: {
+          SignIn: '',
+          SignUp: 'signup',
+          WildApricotCompare: 'compare/wild-apricot',
+        },
+      },
       OrgSelector: 'orgs',
       OrgTabs: {
         path: 'org/:orgId',
@@ -33,7 +41,6 @@ const linking: LinkingOptions<any> = {
         },
       },
       EventDetail: 'org/:orgId/event/:eventId',
-      Auth: 'auth',
     },
   },
 }
@@ -50,9 +57,13 @@ const navTheme = {
   },
 }
 
+const RootView = GestureHandlerRootView as React.ComponentType<
+  React.PropsWithChildren<{ style?: { flex?: number } }>
+>
+
 export default function App() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <RootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <NavigationContainer ref={navigationRef} theme={navTheme} linking={linking}>
           <AuthProvider>
@@ -62,6 +73,6 @@ export default function App() {
           </AuthProvider>
         </NavigationContainer>
       </SafeAreaProvider>
-    </GestureHandlerRootView>
+    </RootView>
   )
 }

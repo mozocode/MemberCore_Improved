@@ -22,7 +22,7 @@ export function ErrorFallback({ error, resetErrorBoundary }: ErrorFallbackProps)
             We hit an unexpected error. You can try again or head back to the home page.
           </p>
         </div>
-        {process.env.NODE_ENV === 'development' && (
+        {import.meta.env.DEV && (
           <pre className="text-left text-xs bg-zinc-900 border border-zinc-800 rounded-lg p-4 overflow-auto max-h-32 text-zinc-500">
             {error.message}
           </pre>
@@ -38,12 +38,12 @@ export function ErrorFallback({ error, resetErrorBoundary }: ErrorFallbackProps)
               Try again
             </Button>
           )}
-          <Button asChild className="bg-white text-black hover:bg-zinc-200">
-            <Link to="/">
+          <Link to="/">
+            <Button className="bg-white text-black hover:bg-zinc-200">
               <Home className="h-4 w-4 mr-2" />
               Go to home
-            </Link>
-          </Button>
+            </Button>
+          </Link>
         </div>
       </div>
     </div>

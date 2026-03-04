@@ -4,28 +4,18 @@ import {
   Text,
   FlatList,
   TextInput,
+  TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   RefreshControl,
 } from 'react-native'
 import { Feather } from '@expo/vector-icons'
-import { ROLE_LABELS, getInitial } from '@membercore/core'
+import { ROLE_LABELS, getInitial, type Member } from '@membercore/core'
 import { directoryService } from '@membercore/services'
 import { ListSkeleton } from '../components/ListSkeleton'
+import { BulkImportMembersModal } from '../components/BulkImportMembersModal'
+import { useAuth } from '../contexts/AuthContext'
 import type { OrgDrawerScreenProps } from '../navigation/types'
-
-interface MemberRow {
-  id: string
-  user_id: string
-  role: string
-  status: string
-  title?: string
-  nickname?: string
-  name: string
-  email: string
-  avatar?: string
-  initial: string
-}
 
 const ROLE_COLORS: Record<string, { bg: string; text: string }> = {
   owner: { bg: 'rgba(245,158,11,0.2)', text: '#fbbf24' },
@@ -36,10 +26,12 @@ const ROLE_COLORS: Record<string, { bg: string; text: string }> = {
 
 export function MembersScreen({ route }: OrgDrawerScreenProps<'Members'>) {
   const { orgId } = route.params
-  const [allMembers, setAllMembers] = useState<MemberRow[]>([])
+  const { user } = useAuth()
+  const [allMembers, setAllMembers] = useState<Member[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [search, setSearch] = useState('')
+  const [bulkImportVisible, setBulkImportVisible] = useState(false)
 
   const fetchMembers = useCallback(async () => {
     try {
@@ -69,6 +61,12 @@ export function MembersScreen({ route }: OrgDrawerScreenProps<'Members'>) {
         m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q),
     )
   }, [allMembers, search])
+
+  const isAdmin = useMemo(() => {
+    if (!user?.id) return false
+    const me = allMembers.find((m) => m.user_id === user.id)
+    return me?.role === 'owner' || me?.role === 'admin'
+  }, [user?.id, allMembers])
 
   if (loading) {
     return (
@@ -106,6 +104,17 @@ export function MembersScreen({ route }: OrgDrawerScreenProps<'Members'>) {
           autoCorrect={false}
         />
       </View>
+
+      {isAdmin ? (
+        <TouchableOpacity
+          style={styles.bulkImportButton}
+          onPress={() => setBulkImportVisible(true)}
+          activeOpacity={0.7}
+        >
+          <Feather name="upload-cloud" size={18} color="#3b82f6" />
+          <Text style={styles.bulkImportButtonText}>Bulk Import from CSV</Text>
+        </TouchableOpacity>
+      ) : null}
 
       <FlatList
         data={members}
@@ -172,6 +181,12 @@ export function MembersScreen({ route }: OrgDrawerScreenProps<'Members'>) {
           )
         }}
       />
+      <BulkImportMembersModal
+        visible={bulkImportVisible}
+        onClose={() => setBulkImportVisible(false)}
+        orgId={orgId}
+        onSuccess={fetchMembers}
+      />
     </View>
   )
 }
@@ -206,6 +221,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     height: 40,
   },
+
+  /* Bulk import */
+  bulkImportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(59,130,246,0.15)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.3)',
+  },
+  bulkImportButtonText: { color: '#3b82f6', fontSize: 15, fontWeight: '600' },
 
   /* List */
   list: { paddingHorizontal: 16, paddingBottom: 32 },

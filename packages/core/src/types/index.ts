@@ -1,4 +1,4 @@
-export * from './user'
+export type { User, Member as OrgMembership } from './user'
 export * from './organization'
 export * from './message'
 export * from './event'

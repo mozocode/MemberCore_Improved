@@ -16,7 +16,9 @@ import * as Clipboard from 'expo-clipboard'
 import * as Haptics from 'expo-haptics'
 import * as ImagePicker from 'expo-image-picker'
 import { Feather } from '@expo/vector-icons'
-import { getApi } from '@membercore/services'
+import { getApi, billingService } from '@membercore/services'
+import * as WebBrowser from 'expo-web-browser'
+import { BulkImportMembersModal } from '../../components/BulkImportMembersModal'
 import type { RootStackScreenProps } from '../../navigation/types'
 
 type Tab = 'profile' | 'members' | 'billing' | 'danger'
@@ -43,6 +45,7 @@ interface Member {
 
 interface BillingData {
   plan: string
+  billing_plan?: 'pro_monthly' | 'pro_annual' | null
   billing_status: string
   trial_end_date: string | null
   period_end: string | null
@@ -300,6 +303,7 @@ function MembersTab({ orgId }: { orgId: string }) {
   const [loading, setLoading] = useState(true)
   const [members, setMembers] = useState<Member[]>([])
   const [roleModalMember, setRoleModalMember] = useState<Member | null>(null)
+  const [bulkImportVisible, setBulkImportVisible] = useState(false)
 
   const fetchMembers = useCallback(async () => {
     try {
@@ -381,6 +385,14 @@ function MembersTab({ orgId }: { orgId: string }) {
 
   return (
     <View style={{ flex: 1 }}>
+      <TouchableOpacity
+        style={styles.bulkImportButton}
+        onPress={() => setBulkImportVisible(true)}
+        activeOpacity={0.7}
+      >
+        <Feather name="upload-cloud" size={18} color="#3b82f6" />
+        <Text style={styles.bulkImportButtonText}>Bulk Import from CSV</Text>
+      </TouchableOpacity>
       <FlatList
         data={members}
         keyExtractor={(m) => m.id}
@@ -501,23 +513,56 @@ function MembersTab({ orgId }: { orgId: string }) {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <BulkImportMembersModal
+        visible={bulkImportVisible}
+        onClose={() => setBulkImportVisible(false)}
+        orgId={orgId}
+        onSuccess={fetchMembers}
+      />
     </View>
   )
 }
 
 /* ─── Billing Tab ─── */
 
+type ProPlanKey = 'pro_monthly' | 'pro_annual'
+
 function BillingTab({ orgId }: { orgId: string }) {
   const [loading, setLoading] = useState(true)
   const [billing, setBilling] = useState<BillingData | null>(null)
+  const [selectedPlan, setSelectedPlan] = useState<ProPlanKey>('pro_annual')
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
 
-  useEffect(() => {
+  const fetchBilling = useCallback(() => {
     getApi()
       .get(`/billing/${orgId}/billing`)
       .then((r) => setBilling(r.data))
-      .catch(() => {})
+      .catch(() => setBilling(null))
       .finally(() => setLoading(false))
   }, [orgId])
+
+  useEffect(() => {
+    setLoading(true)
+    fetchBilling()
+  }, [fetchBilling])
+
+  const handleUpgrade = useCallback(async () => {
+    if (!billing || billing.plan === 'pro') return
+    setUpgradeLoading(true)
+    try {
+      const { checkout_url } = await billingService.createCheckoutSession(orgId, selectedPlan)
+      if (checkout_url) {
+        await WebBrowser.openBrowserAsync(checkout_url)
+        fetchBilling()
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      Alert.alert('Upgrade failed', typeof msg === 'string' ? msg : 'Could not start checkout. Try again.')
+    } finally {
+      setUpgradeLoading(false)
+    }
+  }, [orgId, selectedPlan, billing?.plan, fetchBilling])
 
   if (loading) {
     return (
@@ -537,49 +582,90 @@ function BillingTab({ orgId }: { orgId: string }) {
   }
 
   const statusColor = STATUS_COLORS[billing.billing_status] || '#71717a'
+  const isPro = billing.plan === 'pro'
+  const planLabel = billing.billing_plan === 'pro_annual' ? 'Pro Annual' : billing.billing_plan === 'pro_monthly' ? 'Pro Monthly' : 'Pro'
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContent}>
-      <View style={styles.card}>
-        <View style={styles.billingRow}>
-          <Text style={styles.label}>Plan</Text>
-          <Text style={styles.value}>{billing.plan || 'Free'}</Text>
-        </View>
-
-        <View style={styles.billingRow}>
-          <Text style={styles.label}>Status</Text>
-          <Text style={[styles.value, { color: statusColor }]}>
-            {billing.billing_status?.replace('_', ' ').toUpperCase() || 'N/A'}
-          </Text>
-        </View>
-
-        {billing.trial_end_date && (
-          <View style={styles.billingRow}>
-            <Text style={styles.label}>Trial Ends</Text>
-            <Text style={styles.value}>
-              {new Date(billing.trial_end_date).toLocaleDateString()}
-            </Text>
+      {isPro ? (
+        <>
+          <View style={styles.card}>
+            <View style={styles.billingRow}>
+              <Text style={styles.label}>Plan</Text>
+              <Text style={styles.value}>{planLabel}</Text>
+            </View>
+            <View style={styles.billingRow}>
+              <Text style={styles.label}>Status</Text>
+              <Text style={[styles.value, { color: statusColor }]}>
+                {billing.billing_status?.replace('_', ' ').toUpperCase() || 'N/A'}
+              </Text>
+            </View>
+            {billing.period_end && (
+              <View style={[styles.billingRow, { borderBottomWidth: 0 }]}>
+                <Text style={styles.label}>Renews</Text>
+                <Text style={styles.value}>
+                  {new Date(billing.period_end).toLocaleDateString()}
+                </Text>
+              </View>
+            )}
           </View>
-        )}
-
-        {billing.period_end && (
-          <View style={styles.billingRow}>
-            <Text style={styles.label}>Period Ends</Text>
-            <Text style={styles.value}>
-              {new Date(billing.period_end).toLocaleDateString()}
-            </Text>
+          <View style={styles.card}>
+            <View style={styles.billingInfoRow}>
+              <Feather name="info" size={16} color="#3b82f6" />
+              <Text style={styles.billingInfoText}>
+                Update payment method or cancel on the MemberCore website.
+              </Text>
+            </View>
           </View>
-        )}
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.billingInfoRow}>
-          <Feather name="info" size={16} color="#3b82f6" />
-          <Text style={styles.billingInfoText}>
-            Subscriptions are managed on the MemberCore website.
-          </Text>
-        </View>
-      </View>
+        </>
+      ) : (
+        <>
+          <Text style={styles.billingPlanHeading}>Choose your plan</Text>
+          <TouchableOpacity
+            style={[
+              styles.planCard,
+              selectedPlan === 'pro_annual' && styles.planCardSelected,
+            ]}
+            onPress={() => setSelectedPlan('pro_annual')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.planCardHeader}>
+              <View style={styles.planBadge}>
+                <Text style={styles.planBadgeText}>Best Value</Text>
+              </View>
+              <Text style={styles.planTitle}>Pro Annual</Text>
+              <Text style={styles.planPrice}>$970 / year</Text>
+              <Text style={styles.planSubtext}>2 months free vs monthly</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.planCard,
+              selectedPlan === 'pro_monthly' && styles.planCardSelected,
+            ]}
+            onPress={() => setSelectedPlan('pro_monthly')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.planCardHeader}>
+              <Text style={styles.planTitle}>Pro Monthly</Text>
+              <Text style={styles.planPrice}>$97 / month</Text>
+              <Text style={styles.planSubtext}>Flat rate, unlimited members</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.upgradeButton, upgradeLoading && styles.upgradeButtonDisabled]}
+            onPress={handleUpgrade}
+            disabled={upgradeLoading}
+            activeOpacity={0.7}
+          >
+            {upgradeLoading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.upgradeButtonText}>Upgrade to MemberCore Pro</Text>
+            )}
+          </TouchableOpacity>
+        </>
+      )}
     </ScrollView>
   )
 }
@@ -821,6 +907,22 @@ const styles = StyleSheet.create({
   /* Members */
   listContent: { padding: 16, paddingBottom: 32 },
   emptyContainer: { flexGrow: 1 },
+  bulkImportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(59,130,246,0.15)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.3)',
+  },
+  bulkImportButtonText: { color: '#3b82f6', fontSize: 15, fontWeight: '600' },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
@@ -961,6 +1063,66 @@ const styles = StyleSheet.create({
   },
 
   /* Billing */
+  billingPlanHeading: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  planCard: {
+    backgroundColor: '#18181b',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#3f3f46',
+    padding: 16,
+    marginBottom: 12,
+  },
+  planCardSelected: {
+    borderColor: '#3b82f6',
+    backgroundColor: 'rgba(59,130,246,0.08)',
+  },
+  planCardHeader: { gap: 4 },
+  planBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#22c55e',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  planBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  planTitle: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  planPrice: {
+    color: '#a1a1aa',
+    fontSize: 15,
+    marginTop: 2,
+  },
+  planSubtext: {
+    color: '#71717a',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  upgradeButton: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  upgradeButtonDisabled: { opacity: 0.6 },
+  upgradeButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   billingRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

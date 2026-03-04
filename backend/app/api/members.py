@@ -1,15 +1,17 @@
-"""Organization members API - list, update role, approve, reject, export."""
+"""Organization members API - list, update role, approve, reject, export, import CSV."""
 import csv
 import io
+import re
+import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, File, HTTPException, UploadFile, status, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.db.firebase import get_firestore
-from app.core.security import get_current_user_id, get_current_user, generate_uuid
+from app.core.security import get_current_user_id, get_current_user, generate_uuid, hash_password
 
 router = APIRouter()
 
@@ -272,3 +274,162 @@ def export_members_csv(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=members.csv"},
     )
+
+
+# Simple email validation for CSV import
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _normalize_csv_headers(row: list) -> dict:
+    """Map first row to lowercase keys for case-insensitive column lookup."""
+    return { (cell or "").strip().lower(): i for i, cell in enumerate(row) }
+
+
+def _parse_csv_row(row: list, headers: dict) -> Optional[dict]:
+    """Extract first_name, last_name, email, role from a data row. Returns None if email missing/invalid."""
+    def get(col: str) -> str:
+        idx = headers.get(col)
+        if idx is None or idx >= len(row):
+            return ""
+        return (row[idx] or "").strip()
+
+    email = get("email")
+    if not email or not _EMAIL_RE.match(email):
+        return None
+    first = get("first_name") or get("first name")
+    last = get("last_name") or get("last name")
+    role_raw = (get("role") or "member").lower()
+    role = role_raw if role_raw in ("admin", "member", "restricted") else "member"
+    return {
+        "first_name": first,
+        "last_name": last,
+        "email": email.lower(),
+        "role": role,
+    }
+
+
+@router.post("/{org_id}/members/import-csv")
+async def import_members_csv(
+    org_id: str,
+    file: UploadFile = File(..., alias="file"),
+    user: dict = Depends(get_current_user),
+):
+    """Import members from CSV. Creates users if needed and adds them as pending members. Admin/owner only."""
+    db = get_firestore()
+    my_role = _require_org_member(db, org_id, user["id"])
+    _require_admin_or_owner(my_role)
+
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file")
+
+    content = await file.read()
+    try:
+        text = content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded")
+
+    reader = csv.reader(io.StringIO(text))
+    rows_list = list(reader)
+    if not rows_list:
+        raise HTTPException(status_code=400, detail="CSV file is empty")
+
+    headers = _normalize_csv_headers(rows_list[0])
+    if "email" not in headers:
+        raise HTTPException(status_code=400, detail="CSV must have an 'email' column")
+
+    result_rows: list[dict] = []
+    imported_count = 0
+    skipped_count = 0
+
+    for row_index, row in enumerate(rows_list[1:], start=2):  # 1-based, skip header
+        if not row or all(not (c or "").strip() for c in row):
+            continue
+        parsed = _parse_csv_row(row, headers)
+        if not parsed:
+            email_idx = headers.get("email", 0)
+            display_email = (row[email_idx] if email_idx < len(row) else "") or ""
+            result_rows.append({
+                "row_index": row_index,
+                "email": display_email,
+                "status": "invalid",
+                "error_message": "Missing or invalid email",
+            })
+            skipped_count += 1
+            continue
+
+        email = parsed["email"]
+        users_ref = db.collection("users")
+        existing_users = list(users_ref.where("email", "==", email).limit(1).get())
+
+        if existing_users:
+            user_doc = existing_users[0]
+            user_id = user_doc.id
+            # Optionally update name if we have first/last and user exists
+            ud = user_doc.to_dict() or {}
+            if (parsed["first_name"] or parsed["last_name"]) and not (ud.get("name") or "").strip():
+                name = f"{parsed['first_name']} {parsed['last_name']}".strip()
+                if name:
+                    users_ref.document(user_id).update({
+                        "name": name,
+                        "updated_at": datetime.now(timezone.utc),
+                    })
+        else:
+            user_id = generate_uuid()
+            name = f"{parsed['first_name']} {parsed['last_name']}".strip() or email
+            temp_password = secrets.token_urlsafe(16)
+            now = datetime.now(timezone.utc)
+            user_data = {
+                "id": user_id,
+                "email": email,
+                "name": name,
+                "hashed_password": hash_password(temp_password),
+                "avatar": None,
+                "phone_number": None,
+                "is_active": True,
+                "is_platform_admin": False,
+                "created_at": now,
+                "updated_at": now,
+            }
+            users_ref.document(user_id).set(user_data)
+
+        # Check if already a member of this org
+        existing_members = list(
+            db.collection("members")
+            .where("user_id", "==", user_id)
+            .where("organization_id", "==", org_id)
+            .limit(1)
+            .get()
+        )
+        if existing_members:
+            result_rows.append({
+                "row_index": row_index,
+                "email": email,
+                "status": "duplicate",
+                "error_message": "Already a member",
+            })
+            skipped_count += 1
+            continue
+
+        member_id = generate_uuid()
+        now = datetime.now(timezone.utc)
+        member_data = {
+            "id": member_id,
+            "user_id": user_id,
+            "organization_id": org_id,
+            "role": parsed["role"],
+            "status": "pending",
+            "title": None,
+            "nickname": None,
+            "role_label": None,
+            "allowed_channels": [],
+            "joined_at": now,
+        }
+        db.collection("members").document(member_id).set(member_data)
+        result_rows.append({"row_index": row_index, "email": email, "status": "imported"})
+        imported_count += 1
+
+    return {
+        "imported_count": imported_count,
+        "skipped_count": skipped_count,
+        "rows": result_rows,
+    }

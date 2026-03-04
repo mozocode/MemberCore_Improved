@@ -3,7 +3,11 @@ export { authService, type SigninPayload, type SignupPayload, type AuthResponse 
 export { chatService, type ListMessagesResponse, type SendMessagePayload, type ChannelReadState, type ChatSummary } from './chat.service'
 export { eventService } from './event.service'
 export { duesService } from './dues.service'
-export { directoryService } from './directory.service'
+export {
+  directoryService,
+  type ImportMembersCsvResult,
+  type CsvFileForUpload,
+} from './directory.service'
 export { pollService } from './poll.service'
 export { documentService } from './document.service'
 export { organizationService, type Organization } from './organization.service'

@@ -3,6 +3,7 @@
   "compilerOptions": {
     "strict": true,
     "baseUrl": ".",
+    "skipLibCheck": true,
     "paths": {
       "@membercore/core": ["../../packages/core/src"],
       "@membercore/services": ["../../packages/services/src"],

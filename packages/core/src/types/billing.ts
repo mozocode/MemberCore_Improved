@@ -1,5 +1,7 @@
 export type OrgPlan = 'free' | 'pro'
 
+export type BillingPlanPro = 'pro_monthly' | 'pro_annual'
+
 export type BillingStatus =
   | 'active'
   | 'trial'
@@ -10,6 +12,8 @@ export type BillingStatus =
 
 export interface BillingState {
   plan: OrgPlan
+  /** When plan is 'pro', which Pro tier (monthly vs annual). */
+  billing_plan?: BillingPlanPro | null
   billing_status: BillingStatus
   trial_end_date?: string | null
   period_end?: string | null

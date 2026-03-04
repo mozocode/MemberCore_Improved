@@ -5,10 +5,12 @@ import Constants from 'expo-constants'
 import { getApi } from '@membercore/services'
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
+  handleNotification: async (): Promise<Notifications.NotificationBehavior> => ({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 })
 
@@ -73,19 +75,11 @@ export function usePushNotifications(
     })
 
     return () => {
-      if (notificationListener.current) {
-        if (typeof notificationListener.current.remove === 'function') {
-          notificationListener.current.remove()
-        } else if (typeof Notifications.removeNotificationSubscription === 'function') {
-          Notifications.removeNotificationSubscription(notificationListener.current)
-        }
+      if (notificationListener.current?.remove) {
+        notificationListener.current.remove()
       }
-      if (responseListener.current) {
-        if (typeof responseListener.current.remove === 'function') {
-          responseListener.current.remove()
-        } else if (typeof Notifications.removeNotificationSubscription === 'function') {
-          Notifications.removeNotificationSubscription(responseListener.current)
-        }
+      if (responseListener.current?.remove) {
+        responseListener.current.remove()
       }
     }
   }, [registerForPush, onNotificationTap])

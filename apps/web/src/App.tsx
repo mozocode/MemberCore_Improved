@@ -12,25 +12,27 @@ import { SignUp } from '@/pages/SignUp'
 
 // Lazy-loaded routes (code-split; load on first visit)
 const UserDashboard = lazy(() => import('@/pages/UserDashboard').then((m) => ({ default: m.UserDashboard })))
-const CreateOrganization = lazy(() => import('@/pages/CreateOrganization').then((m) => ({ default: m.default })))
-const JoinOrganization = lazy(() => import('@/pages/JoinOrganization').then((m) => ({ default: m.default })))
+const CreateOrganization = lazy(() => import('@/pages/CreateOrganization').then((m) => ({ default: m.CreateOrganization })))
+const JoinOrganization = lazy(() => import('@/pages/JoinOrganization').then((m) => ({ default: m.JoinOrganization })))
 const OrgLayout = lazy(() => import('@/components/OrgLayout').then((m) => ({ default: m.OrgLayout })))
-const OrgHome = lazy(() => import('@/pages/OrgHome').then((m) => ({ default: m.default })))
-const OrgChat = lazy(() => import('@/pages/org/OrgChat').then((m) => ({ default: m.default })))
-const OrgCalendar = lazy(() => import('@/pages/org/OrgCalendar').then((m) => ({ default: m.default })))
-const OrgEventDetail = lazy(() => import('@/pages/org/OrgEventDetail').then((m) => ({ default: m.default })))
-const OrgTicketDetail = lazy(() => import('@/pages/org/OrgTicketDetail').then((m) => ({ default: m.default })))
-const OrgDirectory = lazy(() => import('@/pages/org/OrgDirectory').then((m) => ({ default: m.default })))
-const OrgMembers = lazy(() => import('@/pages/org/OrgMembers').then((m) => ({ default: m.default })))
-const OrgDues = lazy(() => import('@/pages/org/OrgDues').then((m) => ({ default: m.default })))
-const OrgDocuments = lazy(() => import('@/pages/org/OrgDocuments').then((m) => ({ default: m.default })))
-const OrgPolls = lazy(() => import('@/pages/org/OrgPolls').then((m) => ({ default: m.default })))
-const OrgMessages = lazy(() => import('@/pages/org/OrgMessages').then((m) => ({ default: m.default })))
-const OrgSettings = lazy(() => import('@/pages/org/OrgSettings').then((m) => ({ default: m.default })))
-const PublicDirectory = lazy(() => import('@/pages/PublicDirectory').then((m) => ({ default: m.default })))
-const PublicEventDetail = lazy(() => import('@/pages/PublicEventDetail').then((m) => ({ default: m.default })))
-const PublicMyTicket = lazy(() => import('@/pages/PublicMyTicket').then((m) => ({ default: m.default })))
+const OrgHome = lazy(() => import('@/pages/OrgHome').then((m) => ({ default: m.OrgHome })))
+const OrgChat = lazy(() => import('@/pages/org/OrgChat').then((m) => ({ default: m.OrgChat })))
+const OrgCalendar = lazy(() => import('@/pages/org/OrgCalendar').then((m) => ({ default: m.OrgCalendar })))
+const OrgEventDetail = lazy(() => import('@/pages/org/OrgEventDetail').then((m) => ({ default: m.OrgEventDetail })))
+const OrgTicketDetail = lazy(() => import('@/pages/org/OrgTicketDetail').then((m) => ({ default: m.OrgTicketDetail })))
+const OrgDirectory = lazy(() => import('@/pages/org/OrgDirectory').then((m) => ({ default: m.OrgDirectory })))
+const OrgMembers = lazy(() => import('@/pages/org/OrgMembers').then((m) => ({ default: m.OrgMembers })))
+const OrgDues = lazy(() => import('@/pages/org/OrgDues').then((m) => ({ default: m.OrgDues })))
+const OrgDocuments = lazy(() => import('@/pages/org/OrgDocuments').then((m) => ({ default: m.OrgDocuments })))
+const OrgPolls = lazy(() => import('@/pages/org/OrgPolls').then((m) => ({ default: m.OrgPolls })))
+const OrgMessages = lazy(() => import('@/pages/org/OrgMessages').then((m) => ({ default: m.OrgMessages })))
+const OrgSettings = lazy(() => import('@/pages/org/OrgSettings').then((m) => ({ default: m.OrgSettings })))
+const PublicDirectory = lazy(() => import('@/pages/PublicDirectory').then((m) => ({ default: m.PublicDirectory })))
+const PublicEventDetail = lazy(() => import('@/pages/PublicEventDetail').then((m) => ({ default: m.PublicEventDetail })))
+const PublicMyTicket = lazy(() => import('@/pages/PublicMyTicket').then((m) => ({ default: m.PublicMyTicket })))
 const Privacy = lazy(() => import('@/pages/Privacy').then((m) => ({ default: m.default })))
+const AssociationManagementSoftware = lazy(() => import('@/pages/AssociationManagementSoftware').then((m) => ({ default: m.default })))
+const MotorcycleClubs = lazy(() => import('@/pages/MotorcycleClubs').then((m) => ({ default: m.default })))
 const AdminOverview = lazy(() => import('@/pages/admin/AdminOverview').then((m) => ({ default: m.default })))
 const AdminGrowth = lazy(() => import('@/pages/admin/AdminGrowth').then((m) => ({ default: m.default })))
 const AdminActivation = lazy(() => import('@/pages/admin/AdminActivation').then((m) => ({ default: m.default })))
@@ -78,6 +80,28 @@ function AppRoutes() {
   if (pathname === '/signin' || pathname === '/signin/') {
     return <SignIn />
   }
+  // Ensure association page always renders (avoids catch-all redirect from trailing slash or cache)
+  if (pathname === '/association-management-software' || pathname === '/association-management-software/') {
+    if (pathname.endsWith('/')) {
+      return <Navigate to="/association-management-software" replace />
+    }
+    return (
+      <Suspense fallback={<PageSkeleton />}>
+        <AssociationManagementSoftware />
+      </Suspense>
+    )
+  }
+  // Motorcycle clubs landing – same early handling so it never hits catch-all
+  if (pathname === '/motorcycle-clubs' || pathname === '/motorcycle-clubs/') {
+    if (pathname.endsWith('/')) {
+      return <Navigate to="/motorcycle-clubs" replace />
+    }
+    return (
+      <Suspense fallback={<PageSkeleton />}>
+        <MotorcycleClubs />
+      </Suspense>
+    )
+  }
   return (
     <Suspense fallback={<PageSkeleton />}>
     <Routes>
@@ -103,6 +127,10 @@ function AppRoutes() {
         }
       />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/association-management-software" element={<AssociationManagementSoftware />} />
+      <Route path="/association-management-software/" element={<Navigate to="/association-management-software" replace />} />
+      <Route path="/motorcycle-clubs" element={<MotorcycleClubs />} />
+      <Route path="/motorcycle-clubs/" element={<Navigate to="/motorcycle-clubs" replace />} />
       <Route path="/directory" element={<PublicDirectory />} />
       <Route path="/events/:eventId/my-ticket" element={<PublicMyTicket />} />
       <Route path="/events/:eventId" element={<PublicEventDetail />} />

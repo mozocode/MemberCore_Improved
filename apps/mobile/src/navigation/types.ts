@@ -29,12 +29,14 @@ export type OrgDrawerParamList = {
   Dues: { orgId: string }
   Documents: { orgId: string }
   Polls: { orgId: string }
+  More: { orgId: string }
   Settings: { orgId: string }
 }
 
 export type AuthStackParamList = {
   SignIn: undefined
   SignUp: undefined
+  WildApricotCompare: undefined
 }
 
 export type RootStackScreenProps<T extends keyof RootStackParamList> =

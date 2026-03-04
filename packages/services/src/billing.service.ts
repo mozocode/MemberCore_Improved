@@ -1,6 +1,8 @@
 import type { BillingState } from '@membercore/core'
 import { getApi } from './api'
 
+export type ProPlanKey = 'pro_monthly' | 'pro_annual'
+
 export const billingService = {
   /**
    * Get billing state for an organization.
@@ -12,8 +14,23 @@ export const billingService = {
   },
 
   /**
-   * Create a Stripe Checkout Session for a new Pro subscription.
-   * WEB ONLY — never call from mobile app.
+   * Create a Stripe Checkout Session for Pro subscription (monthly or annual).
+   * Returns checkout_url to open in browser (e.g. WebBrowser.openBrowserAsync).
+   */
+  async createCheckoutSession(
+    orgId: string,
+    plan: ProPlanKey,
+  ): Promise<{ checkout_url: string; session_id: string }> {
+    const { data } = await getApi().post<{ checkout_url: string; session_id: string }>(
+      `/billing/${orgId}/billing/create-checkout-session`,
+      { plan },
+    )
+    return data
+  },
+
+  /**
+   * Create a Stripe Checkout Session for a new Pro subscription (web: pass URLs).
+   * WEB ONLY — optional; mobile uses createCheckoutSession(orgId, plan).
    */
   async createCheckout(
     orgId: string,

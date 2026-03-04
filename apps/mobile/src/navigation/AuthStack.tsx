@@ -2,6 +2,7 @@ import React from 'react'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { SignInScreen } from '../screens/SignInScreen'
 import { SignUpScreen } from '../screens/SignUpScreen'
+import { WildApricotComparisonScreen } from '../screens/WildApricotComparisonScreen'
 import type { AuthStackParamList } from './types'
 import { colors } from '../theme'
 
@@ -19,6 +20,11 @@ export function AuthStack() {
     >
       <Stack.Screen name="SignIn" component={SignInScreen} options={{ headerShown: false }} />
       <Stack.Screen name="SignUp" component={SignUpScreen} options={{ title: 'Create Account' }} />
+      <Stack.Screen
+        name="WildApricotCompare"
+        component={WildApricotComparisonScreen}
+        options={{ headerShown: false }}
+      />
     </Stack.Navigator>
   )
 }

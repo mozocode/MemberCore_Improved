@@ -41,6 +41,8 @@
     "react-native-worklets": "0.5.1"
   },
   "overrides": {
-    "react-native-worklets": "0.5.1"
+    "react-native-worklets": "0.5.1",
+    "@types/react": "18.2.79",
+    "@types/react-dom": "18.2.25"
   }
 }

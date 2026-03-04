@@ -36,6 +36,48 @@ ACTIVE_STATUSES = {"active", "trial", "exempt"}
 
 PRO_MONTHLY_PRICE_CENTS = 9900  # $99.00/month
 
+# Plan types for Pro subscription (monthly vs annual)
+PRO_PLAN_MONTHLY = "pro_monthly"
+PRO_PLAN_ANNUAL = "pro_annual"
+
+
+def _get_price_id_for_plan(plan: str) -> Optional[str]:
+    """Return Stripe Price ID for the given plan. Uses env STRIPE_PRICE_PRO_MONTHLY / STRIPE_PRICE_PRO_ANNUAL."""
+    if plan == PRO_PLAN_ANNUAL:
+        return os.getenv("STRIPE_PRICE_PRO_ANNUAL")
+    if plan == PRO_PLAN_MONTHLY:
+        return os.getenv("STRIPE_PRICE_PRO_MONTHLY")
+    return None
+
+
+def _plan_from_price_id(price_id: str) -> Optional[str]:
+    """Map Stripe Price ID to our plan key."""
+    if not price_id:
+        return None
+    if price_id == os.getenv("STRIPE_PRICE_PRO_ANNUAL"):
+        return PRO_PLAN_ANNUAL
+    if price_id == os.getenv("STRIPE_PRICE_PRO_MONTHLY"):
+        return PRO_PLAN_MONTHLY
+    return None
+
+
+def _get_subscription_price_id(sub) -> Optional[str]:
+    """Extract the first price ID from a Stripe subscription (dict or object)."""
+    try:
+        items = sub.get("items") if hasattr(sub, "get") else getattr(sub, "items", None)
+        if not items:
+            return None
+        data = items.get("data") if hasattr(items, "get") else getattr(items, "data", [])
+        if not data:
+            return None
+        first = data[0] if isinstance(data, list) else list(data)[0]
+        price = first.get("price") if hasattr(first, "get") else getattr(first, "price", None)
+        if not price:
+            return None
+        return price.get("id") if hasattr(price, "get") else getattr(price, "id", None)
+    except (IndexError, TypeError, AttributeError):
+        return None
+
 
 def _get_or_create_pro_price(stripe_mod) -> str:
     """Find an existing MemberCore Pro price or create one.
@@ -163,8 +205,10 @@ def get_billing_state(
     if d.get("platform_admin_owned") or d.get("billing_exempt"):
         billing_status = "exempt"
 
+    billing_plan = d.get("billing_plan")  # 'pro_monthly' | 'pro_annual' when Pro
     return {
         "plan": "pro" if is_pro else "free",
+        "billing_plan": billing_plan if is_pro else None,
         "billing_status": billing_status,
         "trial_end_date": d.get("trial_end_date"),
         "period_end": d.get("period_end"),
@@ -182,6 +226,75 @@ class CreateCheckoutRequest(BaseModel):
     success_url: str
     cancel_url: str
     plan: str = "pro"
+
+
+class CreateCheckoutSessionRequest(BaseModel):
+    """Used by mobile (and optionally web) to start checkout without passing URLs."""
+    plan: str  # 'pro_monthly' | 'pro_annual'
+
+
+@router.post("/{org_id}/billing/create-checkout-session")
+def create_checkout_session(
+    org_id: str,
+    req: CreateCheckoutSessionRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Create a Stripe Checkout Session for Pro subscription. Returns checkout_url for redirect (e.g. mobile WebBrowser).
+    success_url and cancel_url come from env BILLING_SUCCESS_URL / BILLING_CANCEL_URL."""
+    db = get_firestore()
+    _require_org_owner_or_admin(db, org_id, user["id"])
+
+    plan = (req.plan or "").strip().lower()
+    if plan not in (PRO_PLAN_MONTHLY, PRO_PLAN_ANNUAL):
+        raise HTTPException(status_code=400, detail="plan must be pro_monthly or pro_annual")
+
+    price_id = _get_price_id_for_plan(plan)
+    if not price_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Stripe price not configured. Set STRIPE_PRICE_PRO_MONTHLY and STRIPE_PRICE_PRO_ANNUAL.",
+        )
+
+    org_doc = db.collection("organizations").document(org_id).get()
+    if not org_doc.exists:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    od = org_doc.to_dict()
+
+    stripe = _get_stripe()
+    customer_id = od.get("stripe_customer_id")
+    if not customer_id:
+        customer = stripe.Customer.create(
+            email=user.get("email"),
+            name=od.get("name", ""),
+            metadata={"org_id": org_id, "user_id": user["id"]},
+        )
+        customer_id = customer.id
+        db.collection("organizations").document(org_id).update({
+            "stripe_customer_id": customer_id,
+        })
+
+    success_url = os.getenv("BILLING_SUCCESS_URL", "https://membercore.io/billing/success")
+    cancel_url = os.getenv("BILLING_CANCEL_URL", "https://membercore.io/billing/cancel")
+
+    subscription_data = {"metadata": {"org_id": org_id, "plan": plan}}
+    trial_days = os.getenv("STRIPE_TRIAL_DAYS")
+    if trial_days and trial_days.isdigit():
+        subscription_data["trial_period_days"] = int(trial_days)
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer=customer_id,
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=success_url,
+            cancel_url=cancel_url,
+            subscription_data=subscription_data,
+            metadata={"org_id": org_id, "type": "org_subscription", "plan": plan},
+        )
+        return {"checkout_url": session.url, "session_id": session.id}
+    except Exception as e:
+        logger.error("Stripe checkout session error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{org_id}/billing/checkout")
@@ -317,6 +430,8 @@ async def stripe_subscription_webhook(request: Request):
 
     if event_type == "checkout.session.completed":
         _handle_checkout_completed(db, obj)
+    elif event_type == "customer.subscription.created":
+        _handle_subscription_updated(db, obj)
     elif event_type == "invoice.paid":
         _handle_invoice_paid(db, obj)
     elif event_type == "invoice.payment_failed":
@@ -378,7 +493,7 @@ def _handle_checkout_completed(db, session: dict):
         "last_payment_date": now,
     }
 
-    # If there's a subscription, fetch its details for trial/period info
+    # If there's a subscription, fetch its details for trial/period info and plan
     if subscription_id:
         try:
             import stripe
@@ -389,6 +504,11 @@ def _handle_checkout_completed(db, session: dict):
                 updates["trial_end_date"] = datetime.fromtimestamp(sub.trial_end, tz=timezone.utc)
             if sub.current_period_end:
                 updates["period_end"] = datetime.fromtimestamp(sub.current_period_end, tz=timezone.utc)
+            # Set billing_plan from subscription's price
+            price_id = _get_subscription_price_id(sub)
+            plan = _plan_from_price_id(price_id)
+            if plan:
+                updates["billing_plan"] = plan
         except Exception as e:
             logger.warning("Could not fetch subscription details: %s", e)
 
@@ -416,7 +536,7 @@ def _handle_invoice_paid(db, invoice: dict):
         "last_payment_date": now,
     }
 
-    # Update period_end from the subscription
+    # Update period_end and billing_plan from the subscription
     if sub_id:
         try:
             import stripe
@@ -424,6 +544,10 @@ def _handle_invoice_paid(db, invoice: dict):
             sub = stripe.Subscription.retrieve(sub_id)
             if sub.current_period_end:
                 updates["period_end"] = datetime.fromtimestamp(sub.current_period_end, tz=timezone.utc)
+            price_id = _get_subscription_price_id(sub)
+            plan = _plan_from_price_id(price_id)
+            if plan:
+                updates["billing_plan"] = plan
         except Exception:
             pass
 
@@ -462,6 +586,7 @@ def _handle_subscription_deleted(db, subscription: dict):
         "is_pro": False,
         "billing_status": "canceled",
         "stripe_subscription_id": None,
+        "billing_plan": None,
     })
     logger.info("Org %s subscription.deleted — downgraded to free", org_id)
 
@@ -488,11 +613,18 @@ def _handle_subscription_updated(db, subscription: dict):
             subscription["current_period_end"], tz=timezone.utc
         )
 
+    # Set billing_plan from subscription price
+    price_id = _get_subscription_price_id(subscription)
+    plan = _plan_from_price_id(price_id)
+    if plan:
+        updates["billing_plan"] = plan
+
     # If status goes to active, ensure is_pro is True
     if status in ("active", "trial"):
         updates["is_pro"] = True
     elif status in ("canceled", "inactive"):
         updates["is_pro"] = False
+        updates["billing_plan"] = None
 
     _sync_billing_to_org(db, org_id, updates)
     logger.info("Org %s subscription.updated — status=%s", org_id, status)
