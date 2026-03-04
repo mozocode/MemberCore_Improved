@@ -92,11 +92,18 @@ export const adminApi = {
   getFeedback: () => admin('/feedback'),
 }
 
-// --- Feedback (org owners only, one-time per org) ---
+// --- Feedback (org owners/admins, one-time per org) ---
+// Path must work when baseURL is either ".../api" or backend root (production often has no /api)
+function feedbackPath(suffix: string): string {
+  const base = (api.defaults.baseURL ?? '') as string
+  const normalized = base.replace(/\/$/, '')
+  return normalized.endsWith('/api') ? `feedback/${suffix}` : `api/feedback/${suffix}`
+}
+
 export const feedbackApi = {
   submitSignupReason: (orgId: string, userId: string, answerText: string) =>
-    api.post('/feedback/signup-reason', { orgId, userId, answerText: answerText || 'Skipped' }),
+    api.post(feedbackPath('signup-reason'), { orgId, userId, answerText: answerText || 'Skipped' }),
 
   submitTrialExitReason: (orgId: string, userId: string, choiceKey: string, answerText: string) =>
-    api.post('/feedback/trial-exit-reason', { orgId, userId, choiceKey, answerText: answerText || '' }),
+    api.post(feedbackPath('trial-exit-reason'), { orgId, userId, choiceKey, answerText: answerText || '' }),
 }
