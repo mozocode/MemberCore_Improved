@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status, Depends
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -286,7 +286,7 @@ def _normalize_csv_headers(row: list) -> dict:
 
 
 def _parse_csv_row(row: list, headers: dict) -> Optional[dict]:
-    """Extract first_name, last_name, email, role from a data row. Returns None if email missing/invalid."""
+    """Extract first_name, last_name, email, role, nickname, title from a data row. Returns None if email missing/invalid."""
     def get(col: str) -> str:
         idx = headers.get(col)
         if idx is None or idx >= len(row):
@@ -300,11 +300,15 @@ def _parse_csv_row(row: list, headers: dict) -> Optional[dict]:
     last = get("last_name") or get("last name")
     role_raw = (get("role") or "member").lower()
     role = role_raw if role_raw in ("admin", "member", "restricted") else "member"
+    nickname = (get("nickname") or "").strip() or None
+    position = (get("position") or get("title") or "").strip() or None
     return {
         "first_name": first,
         "last_name": last,
         "email": email.lower(),
         "role": role,
+        "nickname": nickname,
+        "title": position,
     }
 
 
@@ -312,9 +316,10 @@ def _parse_csv_row(row: list, headers: dict) -> Optional[dict]:
 async def import_members_csv(
     org_id: str,
     file: UploadFile = File(..., alias="file"),
+    send_invites: bool = Form(False),
     user: dict = Depends(get_current_user),
 ):
-    """Import members from CSV. Creates users if needed and adds them as pending members. Admin/owner only."""
+    """Import members from CSV. Creates users if needed and adds them as pending members. If send_invites=True, also creates invite records and sends invite emails. Admin/owner only."""
     db = get_firestore()
     my_role = _require_org_member(db, org_id, user["id"])
     _require_admin_or_owner(my_role)
@@ -337,9 +342,14 @@ async def import_members_csv(
     if "email" not in headers:
         raise HTTPException(status_code=400, detail="CSV must have an 'email' column")
 
+    org_doc = db.collection("organizations").document(org_id).get()
+    org_name = ((org_doc.to_dict() or {}).get("name") or "Organization") if org_doc.exists else "Organization"
+    admin_name = (user.get("name") or user.get("email") or "An admin").strip()
+
     result_rows: list[dict] = []
     imported_count = 0
     skipped_count = 0
+    invites_sent_count = 0
 
     for row_index, row in enumerate(rows_list[1:], start=2):  # 1-based, skip header
         if not row or all(not (c or "").strip() for c in row):
@@ -418,8 +428,8 @@ async def import_members_csv(
             "organization_id": org_id,
             "role": parsed["role"],
             "status": "pending",
-            "title": None,
-            "nickname": None,
+            "title": parsed.get("title"),
+            "nickname": parsed.get("nickname"),
             "role_label": None,
             "allowed_channels": [],
             "joined_at": now,
@@ -428,8 +438,25 @@ async def import_members_csv(
         result_rows.append({"row_index": row_index, "email": email, "status": "imported"})
         imported_count += 1
 
+        if send_invites:
+            from app.api.member_invites import create_invite_and_send
+            invite_id = create_invite_and_send(
+                db,
+                org_id=org_id,
+                org_name=org_name,
+                admin_name=admin_name,
+                email=email,
+                first_name=parsed.get("first_name"),
+                last_name=parsed.get("last_name"),
+                role=parsed["role"],
+                member_id=member_id,
+            )
+            if invite_id:
+                invites_sent_count += 1
+
     return {
         "imported_count": imported_count,
         "skipped_count": skipped_count,
+        "invites_sent": invites_sent_count,
         "rows": result_rows,
     }

@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { path: '/super-admin/verification', label: 'Verification' },
   { path: '/super-admin/club-type-requests', label: 'Organization type requests' },
   { path: '/super-admin/billing', label: 'Billing' },
+  { path: '/super-admin/feedback', label: 'Feedback' },
   { path: '/super-admin/reports', label: 'Reports' },
 ]
 

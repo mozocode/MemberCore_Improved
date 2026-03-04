@@ -20,23 +20,28 @@ export function SignupFeedbackModal({
 }: SignupFeedbackModalProps) {
   const [answerText, setAnswerText] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   if (!open) return null
 
   const handleSubmit = async (skipped: boolean) => {
+    setError(null)
     setLoading(true)
     try {
       await feedbackApi.submitSignupReason(
         orgId,
         userId,
-        skipped ? 'Skipped' : answerText.trim()
+        skipped ? 'Skipped' : (answerText.trim() || 'Skipped')
       )
       onSubmitted()
       onClose()
-    } catch {
-      setLoading(false)
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        'Something went wrong. Please try again.'
+      setError(typeof msg === 'string' ? msg : 'Something went wrong. Please try again.')
     } finally {
-      if (!skipped) setLoading(false)
+      setLoading(false)
     }
   }
 
@@ -70,6 +75,11 @@ export function SignupFeedbackModal({
             className="w-full min-h-[100px] rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-500 resize-none"
             disabled={loading}
           />
+          {error && (
+            <p className="text-sm text-red-400" role="alert">
+              {error}
+            </p>
+          )}
         </div>
         <div className="flex gap-3 p-4 border-t border-zinc-700">
           <Button

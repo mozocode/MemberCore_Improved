@@ -4,6 +4,7 @@ import { getApi } from './api'
 export interface ImportMembersCsvResult {
   imported_count: number
   skipped_count: number
+  invites_sent?: number
   rows: Array<{
     row_index: number
     email: string
@@ -46,9 +47,13 @@ export const directoryService = {
   async importMembersFromCsv(
     orgId: string,
     file: CsvFileForUpload,
+    options?: { sendInvites?: boolean },
   ): Promise<ImportMembersCsvResult> {
     const formData = new FormData()
     formData.append('file', file as any)
+    if (options?.sendInvites) {
+      formData.append('send_invites', 'true')
+    }
     const { data } = await getApi().post<ImportMembersCsvResult>(
       `/organizations/${orgId}/members/import-csv`,
       formData,

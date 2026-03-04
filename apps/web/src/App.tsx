@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { useEffect, lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { ToastProvider } from '@/contexts/ToastContext'
@@ -37,6 +37,7 @@ const CompareWildApricot = lazy(() => import('@/pages/CompareWildApricot').then(
 const Nonprofits = lazy(() => import('@/pages/Nonprofits').then((m) => ({ default: m.default })))
 const SportsClubs = lazy(() => import('@/pages/SportsClubs').then((m) => ({ default: m.default })))
 const Support = lazy(() => import('@/pages/Support').then((m) => ({ default: m.default })))
+const InviteAccept = lazy(() => import('@/pages/InviteAccept').then((m) => ({ default: m.InviteAccept })))
 const AdminOverview = lazy(() => import('@/pages/admin/AdminOverview').then((m) => ({ default: m.default })))
 const AdminGrowth = lazy(() => import('@/pages/admin/AdminGrowth').then((m) => ({ default: m.default })))
 const AdminActivation = lazy(() => import('@/pages/admin/AdminActivation').then((m) => ({ default: m.default })))
@@ -47,8 +48,17 @@ const AdminVerification = lazy(() => import('@/pages/admin/AdminVerification').t
 const AdminOrgTypeRequests = lazy(() => import('@/pages/admin/AdminOrgTypeRequests').then((m) => ({ default: m.default })))
 const AdminBilling = lazy(() => import('@/pages/admin/AdminBilling').then((m) => ({ default: m.default })))
 const AdminReports = lazy(() => import('@/pages/admin/AdminReports').then((m) => ({ default: m.default })))
+const AdminFeedback = lazy(() => import('@/pages/admin/AdminFeedback').then((m) => ({ default: m.default })))
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [pathname])
+  return null
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -139,6 +149,14 @@ function AppRoutes() {
       </Suspense>
     )
   }
+  // Invite accept (public; no auth required to load)
+  if (pathname === '/invite/accept' || pathname.startsWith('/invite/accept?')) {
+    return (
+      <Suspense fallback={<PageSkeleton />}>
+        <InviteAccept />
+      </Suspense>
+    )
+  }
   // Support page
   if (pathname === '/support' || pathname === '/support/') {
     if (pathname.endsWith('/')) {
@@ -187,6 +205,7 @@ function AppRoutes() {
       <Route path="/sports-clubs/" element={<Navigate to="/sports-clubs" replace />} />
       <Route path="/support" element={<Support />} />
       <Route path="/support/" element={<Navigate to="/support" replace />} />
+      <Route path="/invite/accept" element={<InviteAccept />} />
       <Route path="/directory" element={<PublicDirectory />} />
       <Route path="/events/:eventId/my-ticket" element={<PublicMyTicket />} />
       <Route path="/events/:eventId" element={<PublicEventDetail />} />
@@ -202,6 +221,7 @@ function AppRoutes() {
       <Route path="/super-admin/club-type-requests" element={<ProtectedRoute><AdminOrgTypeRequests /></ProtectedRoute>} />
       <Route path="/super-admin/billing" element={<ProtectedRoute><AdminBilling /></ProtectedRoute>} />
       <Route path="/super-admin/reports" element={<ProtectedRoute><AdminReports /></ProtectedRoute>} />
+      <Route path="/super-admin/feedback" element={<ProtectedRoute><AdminFeedback /></ProtectedRoute>} />
       <Route path="/org/:orgId" element={<OrgOrJoinByParam />}>
         <Route index element={<OrgHome />} />
         <Route path="chat" element={<OrgChat />} />
@@ -226,6 +246,7 @@ export default function App() {
   return (
     <ToastProvider>
       <AuthProvider>
+        <ScrollToTop />
         <AppRoutes />
       </AuthProvider>
     </ToastProvider>

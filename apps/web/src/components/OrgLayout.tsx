@@ -179,13 +179,13 @@ export function OrgLayout() {
   const currentPageTitle = getPageTitle(location.pathname, org.name)
   const isChatPage = location.pathname.includes('/chat')
 
-  // Feedback modals: only for org owners, one-time per org
-  const isOwner = role === 'owner'
+  // Feedback modals: for org owners and admins, one-time per org
+  const isOwnerOrAdmin = role === 'owner' || role === 'admin'
   const signupCaptured = org.feedback_flags?.signup_captured === true
   const trialExitCaptured = org.feedback_flags?.trial_exit_captured === true
   const trialExpiredNoPro = isTrialExpiredWithoutPro(org)
-  const showSignupModal = isOwner && !signupCaptured
-  const showTrialExitModal = isOwner && trialExpiredNoPro && !trialExitCaptured && !showSignupModal
+  const showSignupModal = isOwnerOrAdmin && !signupCaptured
+  const showTrialExitModal = isOwnerOrAdmin && trialExpiredNoPro && !trialExitCaptured && !showSignupModal
 
   return (
     <div className="h-[100dvh] lg:h-screen w-full max-w-[100vw] overflow-hidden bg-black text-white flex touch-pan-y">

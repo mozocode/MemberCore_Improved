@@ -11,7 +11,7 @@ import { Loader2 } from 'lucide-react'
 function safeReturnPath(returnParam: string | null): string | null {
   if (!returnParam || typeof returnParam !== 'string') return null
   const path = decodeURIComponent(returnParam).replace(/^\/+/, '/')
-  if (path.startsWith('/org/') || path.startsWith('/join')) return path
+  if (path.startsWith('/org/') || path.startsWith('/join') || path.startsWith('/invite/')) return path
   return null
 }
 

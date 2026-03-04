@@ -22,6 +22,15 @@ TRIAL_EXIT_CHOICES = {
 
 def _require_owner(db, org_id: str, user_id: str) -> None:
     """Ensure the user is the organization owner. Raises 403 otherwise."""
+    _require_role(db, org_id, user_id, ["owner"])
+
+
+def _require_owner_or_admin(db, org_id: str, user_id: str) -> None:
+    """Ensure the user is the organization owner or admin. Raises 403 otherwise."""
+    _require_role(db, org_id, user_id, ["owner", "admin"])
+
+
+def _require_role(db, org_id: str, user_id: str, allowed_roles: list) -> None:
     members = list(
         db.collection("members")
         .where("user_id", "==", user_id)
@@ -32,10 +41,10 @@ def _require_owner(db, org_id: str, user_id: str) -> None:
     if not members:
         raise HTTPException(status_code=404, detail="Organization not found")
     role = members[0].to_dict().get("role", "member")
-    if role != "owner":
+    if role not in allowed_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only organization owners can submit this feedback",
+            detail="Only organization owners and admins can submit this feedback",
         )
 
 
@@ -75,11 +84,11 @@ def submit_signup_reason(
     body: SignupReasonRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Record why the org owner tried MemberCore (one-time per org)."""
+    """Record why the org owner/admin tried MemberCore (one-time per org)."""
     if body.user_id != user["id"]:
         raise HTTPException(status_code=403, detail="User mismatch")
     db = get_firestore()
-    _require_owner(db, body.org_id, body.user_id)
+    _require_owner_or_admin(db, body.org_id, body.user_id)
     ref, org = _get_org_ref(db, body.org_id)
 
     flags = org.get("feedback_flags") or {}
@@ -114,11 +123,11 @@ def submit_trial_exit_reason(
     body: TrialExitReasonRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Record why the org owner didn't continue after trial (one-time per org, only if trial ended without Pro)."""
+    """Record why the org owner/admin didn't continue after trial (one-time per org, only if trial ended without Pro)."""
     if body.user_id != user["id"]:
         raise HTTPException(status_code=403, detail="User mismatch")
     db = get_firestore()
-    _require_owner(db, body.org_id, body.user_id)
+    _require_owner_or_admin(db, body.org_id, body.user_id)
     ref, org = _get_org_ref(db, body.org_id)
 
     # Only allow if trial has effectively ended and org is not Pro

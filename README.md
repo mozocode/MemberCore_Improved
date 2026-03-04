@@ -52,10 +52,12 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8001
 ```
 
-### Frontend
+### Frontend (web)
+
+From the repo root (monorepo):
 
 ```bash
-cd frontend
+cd apps/web
 npm install
 npm run dev
 ```
@@ -69,8 +71,34 @@ The app runs at http://localhost:3000. The API is at http://localhost:8001.
 - `SUPER_ADMIN_EMAIL` – Email that receives platform admin access
 - `GOOGLE_APPLICATION_CREDENTIALS` – Path to Firebase service account JSON
 
-**Frontend** (`.env`):
+**Frontend** (`apps/web/.env`):
 - `VITE_BACKEND_URL` – API base URL (default: `/api`; Vite proxy forwards to backend)
+
+## Testing
+
+### Backend (pytest)
+
+Run the test suite from the backend directory using the project venv:
+
+```bash
+cd backend
+source venv/bin/activate   # or venv\Scripts\activate on Windows
+pip install -r requirements.txt   # if not already installed
+pytest tests/ -v
+```
+
+To run with shorter output: `pytest tests/ -q`
+
+### Web (build)
+
+Verify the web app builds without errors:
+
+```bash
+cd apps/web
+npm install
+npm run build
+# or: npx vite build
+```
 
 ## Features
 
@@ -91,18 +119,21 @@ The app runs at http://localhost:3000. The API is at http://localhost:8001.
 
 ```
 MemberCore/
-├── frontend/          # React app
-│   ├── src/
-│   │   ├── components/
-│   │   ├── contexts/
-│   │   ├── lib/
-│   │   └── pages/
-│   └── ...
+├── apps/
+│   ├── web/           # React (Vite) app
+│   │   ├── src/
+│   │   │   ├── components/
+│   │   │   ├── contexts/
+│   │   │   ├── lib/
+│   │   │   └── pages/
+│   │   └── ...
+│   └── mobile/        # React Native / Expo (optional)
 ├── backend/           # FastAPI app
 │   ├── app/
 │   │   ├── api/
 │   │   ├── core/
-│   │   └── db/
-│   └── ...
+│   │   └── main.py
+│   ├── tests/
+│   └── requirements.txt
 └── README.md
 ```

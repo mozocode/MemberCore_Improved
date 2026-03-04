@@ -1,13 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Search,
   Loader2,
   User,
+  Upload,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { getDisplayName } from '@/lib/displayName'
+import { Button } from '@/components/ui/button'
 
 interface Member {
   id: string
@@ -41,6 +43,15 @@ export function OrgMembers() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [allMembers, setAllMembers] = useState<Member[]>([])
+  const [myRole, setMyRole] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!orgId) return
+    api.get(`/organizations/${orgId}/members/me`).then((r) => setMyRole(r.data?.role ?? null)).catch(() => setMyRole(null))
+  }, [orgId])
 
   const fetchMembers = useCallback(async () => {
     if (!orgId) return
@@ -62,11 +73,40 @@ export function OrgMembers() {
   }, [fetchMembers])
 
   const members = allMembers.filter((m) => m.status === 'approved')
+  const canImport = myRole === 'owner' || myRole === 'admin'
+
+  const handleImportCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !orgId) return
+    e.target.value = ''
+    setImportMessage(null)
+    setImporting(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('send_invites', 'true')
+      const { data } = await api.post<{ imported_count: number; skipped_count: number; invites_sent?: number }>(
+        `/organizations/${orgId}/members/import-csv`,
+        form,
+      )
+      setImportMessage({
+        type: 'success',
+        text: `Imported ${data.imported_count} member${data.imported_count !== 1 ? 's' : ''} and sent ${data.invites_sent ?? 0} invitation${(data.invites_sent ?? 0) !== 1 ? 's' : ''}. ${data.skipped_count} row(s) skipped.`,
+      })
+      fetchMembers()
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setImportMessage({ type: 'error', text: typeof detail === 'string' ? detail : 'Import failed. Please try again.' })
+    } finally {
+      setImporting(false)
+    }
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <div className="relative mb-4">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+      <div className="flex flex-col sm:flex-row gap-4 mb-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
         <input
           type="text"
           placeholder="Search by name or email..."
@@ -74,7 +114,39 @@ export function OrgMembers() {
           onChange={(e) => setSearch(e.target.value)}
           className="w-full h-10 pl-10 pr-4 rounded-lg bg-zinc-900 border border-zinc-700 text-white placeholder:text-zinc-500 text-sm"
         />
+        </div>
+        {canImport && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={handleImportCsv}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="shrink-0 border-zinc-600 text-zinc-300 hover:bg-zinc-800"
+              disabled={importing}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {importing ? ' Importing…' : ' Import & Send Invites'}
+            </Button>
+          </>
+        )}
       </div>
+      {importMessage && (
+        <div
+          className={cn(
+            'mb-4 p-3 rounded-lg text-sm',
+            importMessage.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400',
+          )}
+        >
+          {importMessage.text}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-12">

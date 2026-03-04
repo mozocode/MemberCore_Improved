@@ -175,15 +175,19 @@ export function BulkImportMembersModal({
     if (!pickedFile || validCount === 0) return
     setUploading(true)
     try {
-      const result = await directoryService.importMembersFromCsv(orgId, {
-        uri: pickedFile.uri,
-        name: pickedFile.name,
-        type: 'text/csv',
-      })
+      const result = await directoryService.importMembersFromCsv(
+        orgId,
+        { uri: pickedFile.uri, name: pickedFile.name, type: 'text/csv' },
+        { sendInvites: true },
+      )
       setUploading(false)
+      const inviteMsg =
+        result.invites_sent != null
+          ? ` Sent ${result.invites_sent} invitation${result.invites_sent !== 1 ? 's' : ''}.`
+          : ''
       Alert.alert(
         'Import complete',
-        `Successfully invited ${result.imported_count} members. ${result.skipped_count} row(s) were skipped.`,
+        `Imported ${result.imported_count} member${result.imported_count !== 1 ? 's' : ''}.${inviteMsg} ${result.skipped_count} row(s) skipped.`,
         [{ text: 'OK', onPress: () => { onSuccess?.(); handleClose() } }],
       )
     } catch (err: any) {

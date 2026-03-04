@@ -50,6 +50,18 @@ def test_parse_csv_row_role_normalized():
     assert _parse_csv_row(["a@b.co", "unknown"], headers)["role"] == "member"
 
 
+def test_parse_csv_row_nickname_and_position():
+    headers = {"first_name": 0, "last_name": 1, "email": 2, "nickname": 3, "position": 4}
+    row = ["Jane", "Doe", "jane@example.com", "JD", "Treasurer"]
+    out = _parse_csv_row(row, headers)
+    assert out is not None
+    assert out["nickname"] == "JD"
+    assert out["title"] == "Treasurer"
+    # "title" column is also accepted as alias for position
+    headers2 = {"email": 0, "title": 1}
+    assert _parse_csv_row(["a@b.co", "Secretary"], headers2)["title"] == "Secretary"
+
+
 # --- Integration test: import-csv endpoint ---
 
 def _make_mock_firestore():

@@ -18,6 +18,16 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// Member invite (resolve is public; accept requires auth)
+export const inviteApi = {
+  resolve: (token: string) =>
+    api.get<{ orgId: string; orgName: string; email: string; firstName: string; existingUser: boolean }>(
+      `/member-invites/resolve?token=${encodeURIComponent(token)}`,
+    ).then((r) => r.data),
+  accept: (token: string) =>
+    api.post<{ ok: boolean; orgId: string; message: string }>('/member-invites/accept', { token }).then((r) => r.data),
+}
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -79,6 +89,7 @@ export const adminApi = {
     return admin(`/billing${q.toString() ? `?${q}` : ''}`)
   },
   getReportsAvailable: () => admin('/reports/available'),
+  getFeedback: () => admin('/feedback'),
 }
 
 // --- Feedback (org owners only, one-time per org) ---
