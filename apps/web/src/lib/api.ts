@@ -93,11 +93,13 @@ export const adminApi = {
 }
 
 // --- Feedback (org owners/admins, one-time per org) ---
-// Path must work when baseURL is either ".../api" or backend root (production often has no /api)
+// Support all common baseURL shapes so the request always hits /api/feedback/signup-reason (or trial-exit-reason)
 function feedbackPath(suffix: string): string {
   const base = (api.defaults.baseURL ?? '') as string
   const normalized = base.replace(/\/$/, '')
-  return normalized.endsWith('/api') ? `feedback/${suffix}` : `api/feedback/${suffix}`
+  if (normalized.endsWith('/api/feedback')) return suffix
+  if (normalized.endsWith('/api')) return `feedback/${suffix}`
+  return `api/feedback/${suffix}`
 }
 
 export const feedbackApi = {
