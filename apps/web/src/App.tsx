@@ -33,6 +33,7 @@ const PublicMyTicket = lazy(() => import('@/pages/PublicMyTicket').then((m) => (
 const Privacy = lazy(() => import('@/pages/Privacy').then((m) => ({ default: m.default })))
 const AssociationManagementSoftware = lazy(() => import('@/pages/AssociationManagementSoftware').then((m) => ({ default: m.default })))
 const MotorcycleClubs = lazy(() => import('@/pages/MotorcycleClubs').then((m) => ({ default: m.default })))
+const CompareWildApricot = lazy(() => import('@/pages/CompareWildApricot').then((m) => ({ default: m.default })))
 const AdminOverview = lazy(() => import('@/pages/admin/AdminOverview').then((m) => ({ default: m.default })))
 const AdminGrowth = lazy(() => import('@/pages/admin/AdminGrowth').then((m) => ({ default: m.default })))
 const AdminActivation = lazy(() => import('@/pages/admin/AdminActivation').then((m) => ({ default: m.default })))
@@ -102,6 +103,17 @@ function AppRoutes() {
       </Suspense>
     )
   }
+  // Compare Wild Apricot – public comparison page
+  if (pathname === '/compare/wild-apricot' || pathname === '/compare/wild-apricot/') {
+    if (pathname.endsWith('/')) {
+      return <Navigate to="/compare/wild-apricot" replace />
+    }
+    return (
+      <Suspense fallback={<PageSkeleton />}>
+        <CompareWildApricot />
+      </Suspense>
+    )
+  }
   return (
     <Suspense fallback={<PageSkeleton />}>
     <Routes>
@@ -131,6 +143,8 @@ function AppRoutes() {
       <Route path="/association-management-software/" element={<Navigate to="/association-management-software" replace />} />
       <Route path="/motorcycle-clubs" element={<MotorcycleClubs />} />
       <Route path="/motorcycle-clubs/" element={<Navigate to="/motorcycle-clubs" replace />} />
+      <Route path="/compare/wild-apricot" element={<CompareWildApricot />} />
+      <Route path="/compare/wild-apricot/" element={<Navigate to="/compare/wild-apricot" replace />} />
       <Route path="/directory" element={<PublicDirectory />} />
       <Route path="/events/:eventId/my-ticket" element={<PublicMyTicket />} />
       <Route path="/events/:eventId" element={<PublicEventDetail />} />

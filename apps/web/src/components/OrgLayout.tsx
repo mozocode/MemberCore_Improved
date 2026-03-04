@@ -1,9 +1,39 @@
 import { useState, useEffect } from 'react'
 import { Outlet, useParams, useNavigate, useLocation } from 'react-router-dom'
 import { OrganizationSidebar } from '@/components/OrganizationSidebar'
+import { SignupFeedbackModal } from '@/components/SignupFeedbackModal'
+import { TrialExitFeedbackModal } from '@/components/TrialExitFeedbackModal'
 import { api } from '@/lib/api'
+import { useAuth } from '@/contexts/AuthContext'
 import { Loader2, Menu } from 'lucide-react'
 import type { OrgRole } from '@/lib/permissions'
+
+const TRIAL_DAYS = 30
+
+function parseOrgDate(val: string | { _seconds: number } | undefined): Date | null {
+  if (!val) return null
+  if (typeof val === 'string') return new Date(val)
+  if (typeof val === 'object' && val !== null && '_seconds' in val) {
+    return new Date((val as { _seconds: number })._seconds * 1000)
+  }
+  return null
+}
+
+function getTrialEnd(org: OrgLayoutOrg): Date | null {
+  const end = parseOrgDate(org.trial_end_date as string | { _seconds: number } | undefined)
+  if (end) return end
+  const start = parseOrgDate(org.trial_start_date)
+  if (!start) return null
+  const d = new Date(start)
+  d.setDate(d.getDate() + TRIAL_DAYS)
+  return d
+}
+
+function isTrialExpiredWithoutPro(org: OrgLayoutOrg): boolean {
+  if (org.is_pro || org.platform_admin_owned || org.billing_exempt) return false
+  const end = getTrialEnd(org)
+  return end !== null && end.getTime() <= Date.now()
+}
 
 function getPageTitle(pathname: string, orgName: string): string {
   if (pathname.includes('/chat')) return 'Chat'
@@ -18,7 +48,7 @@ function getPageTitle(pathname: string, orgName: string): string {
   return orgName
 }
 
-interface Org {
+interface OrgLayoutOrg {
   id: string
   name: string
   location?: string
@@ -26,13 +56,20 @@ interface Org {
   icon_color?: string
   dues_label?: string
   menu_hidden_pages?: string[]
+  feedback_flags?: { signup_captured?: boolean; trial_exit_captured?: boolean }
+  is_pro?: boolean
+  platform_admin_owned?: boolean
+  billing_exempt?: boolean
+  trial_start_date?: string | { _seconds: number }
+  trial_end_date?: string | { _seconds: number }
 }
 
 export function OrgLayout() {
   const { orgId } = useParams<{ orgId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const [org, setOrg] = useState<Org | null>(null)
+  const { user } = useAuth()
+  const [org, setOrg] = useState<OrgLayoutOrg | null>(null)
   const [role, setRole] = useState<OrgRole>('member')
   const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0)
@@ -142,8 +179,34 @@ export function OrgLayout() {
   const currentPageTitle = getPageTitle(location.pathname, org.name)
   const isChatPage = location.pathname.includes('/chat')
 
+  // Feedback modals: only for org owners, one-time per org
+  const isOwner = role === 'owner'
+  const signupCaptured = org.feedback_flags?.signup_captured === true
+  const trialExitCaptured = org.feedback_flags?.trial_exit_captured === true
+  const trialExpiredNoPro = isTrialExpiredWithoutPro(org)
+  const showSignupModal = isOwner && !signupCaptured
+  const showTrialExitModal = isOwner && trialExpiredNoPro && !trialExitCaptured && !showSignupModal
+
   return (
     <div className="h-[100dvh] lg:h-screen w-full max-w-[100vw] overflow-hidden bg-black text-white flex touch-pan-y">
+      {user && orgId && (
+        <>
+          <SignupFeedbackModal
+            open={showSignupModal}
+            onClose={() => {}}
+            onSubmitted={() => fetchOrg()}
+            orgId={orgId}
+            userId={user.id}
+          />
+          <TrialExitFeedbackModal
+            open={showTrialExitModal}
+            onClose={() => {}}
+            onSubmitted={() => fetchOrg()}
+            orgId={orgId}
+            userId={user.id}
+          />
+        </>
+      )}
       {/* Desktop sidebar - fixed, always visible on lg+ */}
       <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:left-0 lg:w-64 lg:z-30 bg-black border-r border-zinc-800">
         <OrganizationSidebar

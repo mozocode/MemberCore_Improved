@@ -80,3 +80,12 @@ export const adminApi = {
   },
   getReportsAvailable: () => admin('/reports/available'),
 }
+
+// --- Feedback (org owners only, one-time per org) ---
+export const feedbackApi = {
+  submitSignupReason: (orgId: string, userId: string, answerText: string) =>
+    api.post('/feedback/signup-reason', { orgId, userId, answerText: answerText || 'Skipped' }),
+
+  submitTrialExitReason: (orgId: string, userId: string, choiceKey: string, answerText: string) =>
+    api.post('/feedback/trial-exit-reason', { orgId, userId, choiceKey, answerText: answerText || '' }),
+}
