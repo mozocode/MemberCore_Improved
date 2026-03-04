@@ -34,9 +34,11 @@ export type OrgDrawerParamList = {
 }
 
 export type AuthStackParamList = {
+  Home: undefined
   SignIn: undefined
   SignUp: undefined
   WildApricotCompare: undefined
+  Nonprofits: undefined
 }
 
 export type RootStackScreenProps<T extends keyof RootStackParamList> =

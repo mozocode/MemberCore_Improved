@@ -34,6 +34,7 @@ const Privacy = lazy(() => import('@/pages/Privacy').then((m) => ({ default: m.d
 const AssociationManagementSoftware = lazy(() => import('@/pages/AssociationManagementSoftware').then((m) => ({ default: m.default })))
 const MotorcycleClubs = lazy(() => import('@/pages/MotorcycleClubs').then((m) => ({ default: m.default })))
 const CompareWildApricot = lazy(() => import('@/pages/CompareWildApricot').then((m) => ({ default: m.default })))
+const Nonprofits = lazy(() => import('@/pages/Nonprofits').then((m) => ({ default: m.default })))
 const AdminOverview = lazy(() => import('@/pages/admin/AdminOverview').then((m) => ({ default: m.default })))
 const AdminGrowth = lazy(() => import('@/pages/admin/AdminGrowth').then((m) => ({ default: m.default })))
 const AdminActivation = lazy(() => import('@/pages/admin/AdminActivation').then((m) => ({ default: m.default })))
@@ -114,6 +115,17 @@ function AppRoutes() {
       </Suspense>
     )
   }
+  // Nonprofits landing page
+  if (pathname === '/nonprofits' || pathname === '/nonprofits/') {
+    if (pathname.endsWith('/')) {
+      return <Navigate to="/nonprofits" replace />
+    }
+    return (
+      <Suspense fallback={<PageSkeleton />}>
+        <Nonprofits />
+      </Suspense>
+    )
+  }
   return (
     <Suspense fallback={<PageSkeleton />}>
     <Routes>
@@ -145,6 +157,8 @@ function AppRoutes() {
       <Route path="/motorcycle-clubs/" element={<Navigate to="/motorcycle-clubs" replace />} />
       <Route path="/compare/wild-apricot" element={<CompareWildApricot />} />
       <Route path="/compare/wild-apricot/" element={<Navigate to="/compare/wild-apricot" replace />} />
+      <Route path="/nonprofits" element={<Nonprofits />} />
+      <Route path="/nonprofits/" element={<Navigate to="/nonprofits" replace />} />
       <Route path="/directory" element={<PublicDirectory />} />
       <Route path="/events/:eventId/my-ticket" element={<PublicMyTicket />} />
       <Route path="/events/:eventId" element={<PublicEventDetail />} />

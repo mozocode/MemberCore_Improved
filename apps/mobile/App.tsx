@@ -19,9 +19,11 @@ const linking: LinkingOptions<any> = {
       Auth: {
         path: '',
         screens: {
-          SignIn: '',
+          Home: '',
+          SignIn: 'signin',
           SignUp: 'signup',
           WildApricotCompare: 'compare/wild-apricot',
+          Nonprofits: 'nonprofits',
         },
       },
       OrgSelector: 'orgs',

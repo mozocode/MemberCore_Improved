@@ -89,7 +89,7 @@ export default function AssociationManagementSoftware() {
           <span className={ORANGE}>See, Read, and Respond</span>
         </h1>
         <p className="text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto mb-4 leading-relaxed">
-          MemberCore replaces scattered communication and outdated portals with one modern hub for your association's members, events, and dues at a flat $97/month for unlimited members.
+          Replace scattered communication and outdated portals with one modern hub for your association's members, events, and dues at a flat $97/month for unlimited members.
         </p>
         <p className="text-zinc-500 text-sm md:text-base mb-10">
           Built for small professional & trade associations with 50–1,000 members.
