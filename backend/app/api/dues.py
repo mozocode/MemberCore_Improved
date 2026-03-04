@@ -13,16 +13,20 @@ router = APIRouter()
 
 class CreatePlanRequest(BaseModel):
     name: str
-    amount: float
+    amount: float  # minimum/installment amount (e.g. $100/month)
+    total_amount: Optional[float] = None  # full amount for paid-in-full (e.g. $1200). If omitted, amount is used.
     due_date: Optional[str] = None
     frequency: str = "one_time"  # one_time, monthly, annual
+    payment_option: str = "full_only"  # "full_only" | "custom_only" – one button on member dues page
 
 
 class UpdatePlanRequest(BaseModel):
     name: Optional[str] = None
     amount: Optional[float] = None
+    total_amount: Optional[float] = None
     due_date: Optional[str] = None
     frequency: Optional[str] = None
+    payment_option: Optional[str] = None  # "full_only" | "custom_only"
 
 
 def _require_org_member(db, org_id: str, user_id: str):
@@ -74,6 +78,13 @@ def get_my_dues_status(
     )
     member_id = member_docs[0].id if member_docs else None
 
+    # Get member doc for dues_paid_in_full (manual override by org owner)
+    dues_paid_in_full = False
+    if member_id:
+        member_doc = db.collection("members").document(member_id).get()
+        if member_doc.exists:
+            dues_paid_in_full = member_doc.to_dict().get("dues_paid_in_full", False)
+
     # Get dues plans
     plan_docs = list(
         db.collection("dues_plans")
@@ -97,15 +108,22 @@ def get_my_dues_status(
     total_paid = sum(p.to_dict().get("amount", 0) for p in payment_docs)
     payments = [{"id": p.id, **p.to_dict()} for p in payment_docs]
 
-    # Determine status (simplified)
+    # total_required = sum of total_amount (or amount if no total_amount) per plan
+    def plan_total(p):
+        return p.get("total_amount") if p.get("total_amount") is not None else p.get("amount", 0)
+
+    total_required = sum(plan_total(p) for p in plans)
+
+    # Status: paid_in_full only if owner manually marked OR total_paid >= total_required
     status = "none"
     if total_paid > 0:
         status = "paid"
-    if plans:
-        total_required = sum(p.get("amount", 0) for p in plans)
-        if total_paid >= total_required:
+    if plans and total_required > 0:
+        if dues_paid_in_full or total_paid >= total_required:
             status = "paid_in_full"
-        elif total_required > 0 and total_paid < total_required:
+        elif total_paid > 0 and total_paid < total_required:
+            status = "partial"
+        else:
             status = "pending"
 
     return {
@@ -141,16 +159,23 @@ def create_dues_plan(
 
     plan_id = generate_uuid()
     now = datetime.now(timezone.utc)
-    db.collection("dues_plans").document(plan_id).set({
+    payment_option = (req.payment_option or "full_only").strip().lower()
+    if payment_option not in ("full_only", "custom_only"):
+        payment_option = "full_only"
+    plan_data = {
         "id": plan_id,
         "organization_id": org_id,
         "name": req.name.strip(),
         "amount": float(req.amount),
         "due_date": req.due_date,
         "frequency": req.frequency,
+        "payment_option": payment_option,
         "is_active": True,
         "created_at": now,
-    })
+    }
+    if req.total_amount is not None:
+        plan_data["total_amount"] = float(req.total_amount)
+    db.collection("dues_plans").document(plan_id).set(plan_data)
     return {"id": plan_id, "ok": True}
 
 
@@ -175,10 +200,15 @@ def update_dues_plan(
         updates["name"] = req.name.strip()
     if req.amount is not None:
         updates["amount"] = float(req.amount)
+    if req.total_amount is not None:
+        updates["total_amount"] = float(req.total_amount)
     if req.due_date is not None:
         updates["due_date"] = req.due_date or None
     if req.frequency is not None:
         updates["frequency"] = req.frequency
+    if req.payment_option is not None:
+        po = req.payment_option.strip().lower()
+        updates["payment_option"] = po if po in ("full_only", "custom_only") else "full_only"
     if not updates:
         return {"ok": True}
 
@@ -229,7 +259,12 @@ def get_treasury_stats(
         .where("is_active", "==", True)
         .stream()
     )
-    total_required = sum(p.to_dict().get("amount", 0) for p in plan_docs)
+
+    def plan_total(p):
+        d = p.to_dict()
+        return d.get("total_amount") if d.get("total_amount") is not None else d.get("amount", 0)
+
+    total_required = sum(plan_total(p) for p in plan_docs)
 
     member_docs = list(
         db.collection("members")
@@ -280,7 +315,12 @@ def get_member_status(
         .where("is_active", "==", True)
         .stream()
     )
-    total_required = sum(p.to_dict().get("amount", 0) for p in plan_docs)
+
+    def plan_total(p):
+        d = p.to_dict()
+        return d.get("total_amount") if d.get("total_amount") is not None else d.get("amount", 0)
+
+    total_required = sum(plan_total(p) for p in plan_docs)
 
     payment_docs = list(
         db.collection("payments")

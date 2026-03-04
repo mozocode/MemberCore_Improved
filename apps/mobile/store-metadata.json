@@ -1,0 +1,18 @@
+{
+  "appName": "MemberCore",
+  "subtitle": "Community Management Made Simple",
+  "description": "MemberCore is the all-in-one platform for managing your organization, fraternity, sorority, club, or community group. Stay connected with real-time chat, manage events, track dues, run polls, and keep your directory organized — all in one place.\n\nKey Features:\n• Real-time Chat — Channel-based messaging with reactions, replies, and message pinning\n• Events & Calendar — Create events, RSVP, purchase tickets, and check in with QR codes\n• Dues & Payments — Track member dues with flexible payment options powered by Stripe\n• Directory — Searchable member directory with roles and profiles\n• Polls — Create polls and gather votes from your community\n• Documents — Share important documents and forms with members\n• Push Notifications — Stay updated with instant alerts for messages, events, and more\n• Role-Based Access — Owner, Admin, Member, and Restricted roles with granular permissions",
+  "keywords": "community, organization, fraternity, sorority, club, membership, chat, events, dues, payments, polls, directory",
+  "categories": {
+    "ios": "Social Networking",
+    "android": "Social"
+  },
+  "contentRating": "Everyone",
+  "privacyPolicyUrl": "https://membercore.app/privacy",
+  "termsOfServiceUrl": "https://membercore.app/terms",
+  "supportUrl": "https://membercore.app/support",
+  "screenshots": {
+    "note": "Generate screenshots using Expo's screenshot tool or manually from simulator. Required sizes: iPhone 6.7\", iPhone 6.5\", iPad 12.9\". Android: phone and 7\" tablet."
+  },
+  "reviewNotes": "Test account credentials will be provided in the App Store Connect submission. The app requires an organization to be created via the web dashboard at https://membercore.app before the mobile experience is fully functional."
+}

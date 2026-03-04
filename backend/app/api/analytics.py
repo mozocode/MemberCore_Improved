@@ -196,7 +196,10 @@ def get_analytics_overview(
         .where("is_active", "==", True)
         .stream()
     )
-    total_required = sum(p.to_dict().get("amount", 0) for p in plan_docs)
+    total_required = sum(
+        (p.to_dict().get("total_amount") if p.to_dict().get("total_amount") is not None else p.to_dict().get("amount", 0))
+        for p in plan_docs
+    )
     member_paid = {}
     for p in payment_docs:
         pd = p.to_dict()

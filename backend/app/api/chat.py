@@ -4,6 +4,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+from google.cloud import firestore
 
 from app.db.firebase import get_firestore
 from app.core.security import get_current_user_id, get_current_user, generate_uuid, decode_token
@@ -114,6 +115,7 @@ def post_to_general_chat(
         "sender_id": user_id,
         "sender_name": user.get("name", "Unknown"),
         "sender_nickname": member.get("nickname"),
+        "sender_avatar": user.get("avatar"),
         "content": content,
         "type": message_type,
         "event_data": event_data,
@@ -131,10 +133,23 @@ def post_to_general_chat(
 
 def _can_see_channel(db, channel: dict, user_id: str, org_id: str, member_role: str) -> bool:
     """Check if user can see this channel.
-    - public/everyone: all members can see
-    - restricted: creator, admin/owner, role in allowed_roles, or user_id in allowed_members
+    - Restricted-role members: can ONLY see restricted channels they are allowed into (allowed_roles or allowed_members).
+    - Other members: public channels visible to all; restricted channels if creator, admin/owner, or in allowed_roles/allowed_members.
     """
     vis = channel.get("visibility") or "everyone"
+    is_restricted_channel = vis == "restricted" or channel.get("is_restricted")
+
+    if member_role == "restricted":
+        if not is_restricted_channel:
+            return False
+        if channel.get("created_by") == user_id:
+            return True
+        if "restricted" in (channel.get("allowed_roles") or []):
+            return True
+        if user_id in (channel.get("allowed_members") or []):
+            return True
+        return False
+
     if vis in ("public", "everyone"):
         if channel.get("is_restricted"):
             return (
@@ -177,6 +192,10 @@ class UpdateChannelRequest(BaseModel):
     visibility: Optional[str] = None
     allowed_members: Optional[List[str]] = None
     allowed_roles: Optional[List[str]] = None
+
+
+class PinMessageRequest(BaseModel):
+    message_id: Optional[str] = None  # null or omit to unpin
 
 
 @router.get("/{org_id}/channels")
@@ -224,6 +243,8 @@ def create_channel(
     if not member:
         raise HTTPException(status_code=404, detail="Organization not found")
     role = member[0].to_dict().get("role", "member")
+    if role == "restricted":
+        raise HTTPException(status_code=403, detail="Prospects cannot create chat channels")
 
     visibility = (req.visibility or "public").strip().lower()
     if visibility not in ("public", "restricted"):
@@ -335,6 +356,47 @@ def update_channel(
     return {"ok": True}
 
 
+@router.put("/{org_id}/channels/{channel_id}/pin")
+def pin_message(
+    org_id: str,
+    channel_id: str,
+    req: PinMessageRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Pin or unpin a message in the channel. Admin/owner or channel creator only."""
+    db = get_firestore()
+    member = list(
+        db.collection("members")
+        .where("user_id", "==", user["id"])
+        .where("organization_id", "==", org_id)
+        .where("status", "==", "approved")
+        .limit(1)
+        .get()
+    )
+    if not member:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    role = member[0].to_dict().get("role", "member")
+
+    ref = db.collection("channels").document(channel_id)
+    doc = ref.get()
+    if not doc.exists or doc.to_dict().get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    ch = doc.to_dict()
+    creator = ch.get("created_by")
+    is_creator = creator == user["id"]
+    if role not in ("owner", "admin") and not is_creator:
+        raise HTTPException(status_code=403, detail="Only channel creator or admin/owner can pin messages")
+
+    if req.message_id:
+        msg_doc = db.collection("messages").document(req.message_id).get()
+        if not msg_doc.exists or msg_doc.to_dict().get("channel_id") != channel_id:
+            raise HTTPException(status_code=400, detail="Message not found in this channel")
+        ref.update({"pinned_message_id": req.message_id})
+    else:
+        ref.update({"pinned_message_id": None})
+    return {"ok": True, "pinned_message_id": req.message_id}
+
+
 @router.delete("/{org_id}/channels/{channel_id}")
 def delete_channel(
     org_id: str,
@@ -403,22 +465,121 @@ def list_messages(
 
     docs = list(query.stream())
     messages = []
+    sender_ids_missing_avatar = set()
     for d in docs:
         m = d.to_dict()
         m["id"] = d.id
         created = m.get("created_at")
         if hasattr(created, "isoformat"):
             m["created_at"] = created.isoformat()
+        if not m.get("sender_avatar") and m.get("sender_id"):
+            sender_ids_missing_avatar.add(m["sender_id"])
         messages.append(m)
 
+    if sender_ids_missing_avatar:
+        users_ref = db.collection("users")
+        avatars = {}
+        for uid in sender_ids_missing_avatar:
+            u = users_ref.document(uid).get()
+            if u.exists:
+                av = u.to_dict().get("avatar")
+                if av:
+                    avatars[uid] = av
+        for m in messages:
+            if not m.get("sender_avatar") and m.get("sender_id") in avatars:
+                m["sender_avatar"] = avatars[m["sender_id"]]
+
     messages.reverse()
-    return messages
+
+    # Transform reactions to API format with reactedByMe for current user
+    for m in messages:
+        raw_reactions = m.get("reactions") or {}
+        if raw_reactions:
+            m["reactions"] = _reactions_for_api(raw_reactions, user_id)
+        else:
+            m["reactions"] = []
+
+    # Include last read position for this user (smart unread clusters)
+    read_doc_id = f"{user_id}_{channel_id}"
+    read_ref = db.collection("channel_reads").document(read_doc_id)
+    read_doc = read_ref.get()
+    last_read = {}
+    if read_doc.exists:
+        r = read_doc.to_dict()
+        last_read["last_read_message_id"] = r.get("last_read_message_id")
+        if r.get("last_read_timestamp") and hasattr(r["last_read_timestamp"], "isoformat"):
+            last_read["last_read_timestamp"] = r["last_read_timestamp"].isoformat()
+        elif isinstance(r.get("last_read_timestamp"), str):
+            last_read["last_read_timestamp"] = r["last_read_timestamp"]
+
+    return {
+        "messages": messages,
+        "pinned_message_id": ch.get("pinned_message_id"),
+        **last_read,
+    }
+
+
+class PutReadRequest(BaseModel):
+    last_read_message_id: Optional[str] = None
+    last_read_timestamp: Optional[str] = None
+
+
+@router.get("/{org_id}/channels/{channel_id}/read")
+def get_channel_read(
+    org_id: str,
+    channel_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get current user's last read position for this channel."""
+    db = get_firestore()
+    _require_org_member(db, org_id, user_id)
+    ch_doc = db.collection("channels").document(channel_id).get()
+    if not ch_doc.exists or ch_doc.to_dict().get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    read_ref = db.collection("channel_reads").document(f"{user_id}_{channel_id}")
+    read_doc = read_ref.get()
+    if not read_doc.exists:
+        return {"last_read_message_id": None, "last_read_timestamp": None}
+    r = read_doc.to_dict()
+    out = {"last_read_message_id": r.get("last_read_message_id"), "last_read_timestamp": None}
+    ts = r.get("last_read_timestamp")
+    if ts and hasattr(ts, "isoformat"):
+        out["last_read_timestamp"] = ts.isoformat()
+    elif isinstance(ts, str):
+        out["last_read_timestamp"] = ts
+    return out
+
+
+@router.put("/{org_id}/channels/{channel_id}/read")
+def put_channel_read(
+    org_id: str,
+    channel_id: str,
+    req: PutReadRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Update current user's last read position (on scroll / open / reach bottom)."""
+    db = get_firestore()
+    _require_org_member(db, org_id, user_id)
+    ch_doc = db.collection("channels").document(channel_id).get()
+    if not ch_doc.exists or ch_doc.to_dict().get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    read_ref = db.collection("channel_reads").document(f"{user_id}_{channel_id}")
+    now = datetime.now(timezone.utc)
+    data = {"updated_at": now}
+    if req.last_read_message_id is not None:
+        data["last_read_message_id"] = req.last_read_message_id
+    if req.last_read_timestamp is not None:
+        data["last_read_timestamp"] = req.last_read_timestamp
+    read_ref.set(data, merge=True)
+    return {"ok": True, "last_read_message_id": req.last_read_message_id, "last_read_timestamp": req.last_read_timestamp}
 
 
 class SendMessageRequest(BaseModel):
     content: str = ""
     event_data: Optional[dict] = None
     poll_data: Optional[dict] = None
+    reply_to_message_id: Optional[str] = None
+    reply_to_snippet: Optional[str] = None
 
 
 @router.post("/{org_id}/channels/{channel_id}/messages")
@@ -471,23 +632,233 @@ def send_message(
         "sender_id": user["id"],
         "sender_name": user.get("name", "Unknown"),
         "sender_nickname": member_dict.get("nickname"),
+        "sender_avatar": user.get("avatar"),
         "content": content,
         "type": msg_type,
         "event_data": req.event_data,
         "poll_data": req.poll_data,
         "created_at": now,
     }
+    if req.reply_to_message_id:
+        msg_doc["reply_to_message_id"] = req.reply_to_message_id
+        msg_doc["reply_to_snippet"] = (req.reply_to_snippet or "")[:200]
     db.collection("messages").document(msg_id).set(msg_doc)
-    return {
+    out = {
         "id": msg_id,
         "channel_id": channel_id,
         "sender_id": user["id"],
         "sender_name": user.get("name", "Unknown"),
         "sender_nickname": member_dict.get("nickname"),
+        "sender_avatar": user.get("avatar"),
         "content": content,
         "type": msg_type,
         "created_at": now.isoformat(),
     }
+    if req.reply_to_message_id:
+        out["reply_to_message_id"] = req.reply_to_message_id
+        out["reply_to_snippet"] = msg_doc.get("reply_to_snippet")
+    return out
+
+
+class ToggleReactionRequest(BaseModel):
+    emoji: str  # e.g. "👍", "❤️"
+
+
+def _normalize_reactions(raw: dict) -> dict:
+    """Normalize reactions to the canonical format { emoji: { count, uids } }.
+
+    Handles both old format (emoji -> [uid, ...]) and new format (emoji -> {count, uids}).
+    """
+    out: dict = {}
+    for emoji, value in (raw or {}).items():
+        if isinstance(value, list):
+            uid_map = {uid: True for uid in value}
+            out[emoji] = {"count": len(value), "uids": uid_map}
+        elif isinstance(value, dict):
+            out[emoji] = {
+                "count": value.get("count", len(value.get("uids") or {})),
+                "uids": value.get("uids") or {},
+            }
+    return out
+
+
+def _reactions_for_api(raw: dict, current_uid: str) -> list:
+    """Convert stored reactions into a lightweight API list with reactedByMe flag."""
+    normalized = _normalize_reactions(raw)
+    result = []
+    for emoji, meta in normalized.items():
+        count = meta.get("count", 0)
+        if count <= 0:
+            continue
+        result.append({
+            "emoji": emoji,
+            "count": count,
+            "reactedByMe": bool((meta.get("uids") or {}).get(current_uid)),
+        })
+    return result
+
+
+@router.post("/{org_id}/channels/{channel_id}/messages/{message_id}/reactions")
+def toggle_reaction(
+    org_id: str,
+    channel_id: str,
+    message_id: str,
+    req: ToggleReactionRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Toggle the current user's reaction on a message using a Firestore transaction."""
+    db = get_firestore()
+    _require_org_member(db, org_id, user_id)
+
+    emoji = (req.emoji or "").strip()[:32]
+    if not emoji:
+        raise HTTPException(status_code=400, detail="Emoji required")
+
+    msg_ref = db.collection("messages").document(message_id)
+
+    @firestore.transactional
+    def _toggle_in_tx(tx, ref):
+        snap = ref.get(transaction=tx)
+        if not snap.exists or snap.to_dict().get("channel_id") != channel_id:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        data = snap.to_dict() or {}
+        reactions = _normalize_reactions(data.get("reactions") or {})
+        existing = reactions.get(emoji, {"count": 0, "uids": {}})
+        has_reacted = bool(existing["uids"].get(user_id))
+
+        if has_reacted:
+            existing["uids"].pop(user_id, None)
+            existing["count"] = max(0, existing["count"] - 1)
+        else:
+            existing["uids"][user_id] = True
+            existing["count"] = existing.get("count", 0) + 1
+
+        if existing["count"] <= 0:
+            reactions.pop(emoji, None)
+        else:
+            reactions[emoji] = existing
+
+        tx.update(ref, {"reactions": reactions})
+        return reactions
+
+    tx = db.transaction()
+    final_reactions = _toggle_in_tx(tx, msg_ref)
+
+    return {
+        "ok": True,
+        "reactions": _reactions_for_api(final_reactions, user_id),
+        "messageId": message_id,
+        "emoji": emoji,
+    }
+
+
+class SummaryRequest(BaseModel):
+    last_read_message_id: Optional[str] = None
+    last_read_timestamp: Optional[str] = None
+
+
+def _extractive_summary_bullets(messages: List[dict], max_bullets: int = 6) -> List[str]:
+    """Build 4-6 bullet points from message content (no LLM). Filters short/ack-only; focuses on substance."""
+    bullets = []
+    seen = set()
+    for m in messages:
+        if m.get("type") != "text":
+            if m.get("type") == "event" and m.get("event_data", {}).get("title"):
+                line = f"Event: {m['event_data']['title']}"
+                if line not in seen and len(bullets) < max_bullets:
+                    seen.add(line)
+                    bullets.append(line)
+            elif m.get("type") == "poll":
+                q = (m.get("poll_data") or {}).get("question") or (m.get("content") or "Poll")
+                line = f"Poll: {q[:80]}{'…' if len(q) > 80 else ''}"
+                if line not in seen and len(bullets) < max_bullets:
+                    seen.add(line)
+                    bullets.append(line)
+            continue
+        content = (m.get("content") or "").strip()
+        if len(content) < 10:
+            continue
+        # Dedupe and limit length
+        normalized = content[:200].replace("\n", " ")
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        bullets.append(normalized if len(normalized) <= 120 else normalized[:117] + "...")
+        if len(bullets) >= max_bullets:
+            break
+    return bullets[:max_bullets]
+
+
+@router.post("/{org_id}/channels/{channel_id}/summary")
+def get_channel_summary(
+    org_id: str,
+    channel_id: str,
+    req: SummaryRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """AI-style summary of missed messages (last_read -> now). Extractive for now; plug in LLM later."""
+    db = get_firestore()
+    _require_org_member(db, org_id, user_id)
+    ch_doc = db.collection("channels").document(channel_id).get()
+    if not ch_doc.exists or ch_doc.to_dict().get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    # Messages in channel, newest first; we want messages *after* last read
+    query = (
+        db.collection("messages")
+        .where("channel_id", "==", channel_id)
+        .order_by("created_at", direction="DESCENDING")
+        .limit(100)
+    )
+    docs = list(query.stream())
+    messages_desc = []
+    for d in docs:
+        m = d.to_dict()
+        m["id"] = d.id
+        created = m.get("created_at")
+        if hasattr(created, "isoformat"):
+            m["created_at"] = created.isoformat()
+        messages_desc.append(m)
+
+    # Filter to messages after last read (use datetime.fromisoformat, no extra deps)
+    cutoff_time = None
+    def parse_iso(s: str):
+        if not s:
+            return None
+        s = s.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
+
+    if req.last_read_timestamp:
+        cutoff_time = parse_iso(req.last_read_timestamp)
+    if cutoff_time is None and req.last_read_message_id:
+        for m in messages_desc:
+            if m["id"] == req.last_read_message_id:
+                created = m.get("created_at")
+                if isinstance(created, str):
+                    cutoff_time = parse_iso(created)
+                break
+
+    if cutoff_time:
+        missed = []
+        for m in messages_desc:
+            created_str = m.get("created_at")
+            if not created_str:
+                continue
+            t = parse_iso(created_str) if isinstance(created_str, str) else None
+            if t and t > cutoff_time:
+                missed.append(m)
+    else:
+        missed = list(messages_desc)
+
+    # Chronological for summary
+    missed_chron = list(reversed(missed))
+    bullets = _extractive_summary_bullets(missed_chron, max_bullets=6)
+    summary_text = " • ".join(bullets) if bullets else "No new activity to summarize."
+    return {"summary": summary_text, "bullets": bullets, "missed_count": len(missed)}
 
 
 # --- WebSocket ---
@@ -638,12 +1009,17 @@ async def chat_websocket(
                     "sender_id": user["id"],
                     "sender_name": user.get("name", "Unknown"),
                     "sender_nickname": member.get("nickname"),
+                    "sender_avatar": user.get("avatar"),
                     "content": content,
                     "type": msg_type_val,
                     "event_data": data.get("event_data"),
                     "poll_data": data.get("poll_data"),
                     "created_at": now.isoformat(),
                 }
+                reply_to_id = data.get("reply_to_message_id")
+                if reply_to_id:
+                    msg_doc["reply_to_message_id"] = reply_to_id
+                    msg_doc["reply_to_snippet"] = (data.get("reply_to_snippet") or "")[:200]
 
                 db.collection("messages").document(msg_id).set({
                     **msg_doc,

@@ -1,0 +1,24 @@
+import React from 'react'
+import { createNativeStackNavigator } from '@react-navigation/native-stack'
+import { SignInScreen } from '../screens/SignInScreen'
+import { SignUpScreen } from '../screens/SignUpScreen'
+import type { AuthStackParamList } from './types'
+import { colors } from '../theme'
+
+const Stack = createNativeStackNavigator<AuthStackParamList>()
+
+export function AuthStack() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: colors.background },
+        headerTintColor: colors.text,
+        headerTitleStyle: { fontWeight: '600' },
+        contentStyle: { backgroundColor: colors.background },
+      }}
+    >
+      <Stack.Screen name="SignIn" component={SignInScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="SignUp" component={SignUpScreen} options={{ title: 'Create Account' }} />
+    </Stack.Navigator>
+  )
+}

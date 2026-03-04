@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "MemberCore",
+    "slug": "membercore",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#09090b"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.membercore.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "remote-notification",
+          "remote-notification"
+        ],
+        "NSCameraUsageDescription": "MemberCore uses your camera to scan QR codes for event check-in.",
+        "NSPhotoLibraryUsageDescription": "MemberCore uses your photos for profile pictures and event images."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#09090b"
+      },
+      "package": "com.membercore.app",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-notifications",
+      "expo-asset",
+      "expo-font",
+      "expo-image-picker"
+    ],
+    "scheme": "membercore",
+    "extra": {
+      "eas": {
+        "projectId": "ec788f34-0bbb-4caf-abc7-b0efe8f3f83e"
+      }
+    },
+    "owner": "mozodev",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/ec788f34-0bbb-4caf-abc7-b0efe8f3f83e"
+    }
+  }
+}

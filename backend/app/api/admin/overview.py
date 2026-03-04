@@ -279,9 +279,15 @@ def get_billing(
         if plan_filter != "All" and plan != plan_filter:
             continue
         d["plan"] = plan
-        d["trial_end"] = d.get("trial_start_date")  # or trial_end if you have it
+        # Prefer Stripe-synced trial_end_date; fallback to trial_start_date for legacy/display
+        d["trial_end"] = d.get("trial_end_date") or d.get("trial_start_date")
         d["period_end"] = d.get("period_end")
         d["has_stripe"] = bool(d.get("stripe_customer_id"))
+        # Billing status synced by billing API (active, trial, past_due, exempt, etc.)
+        if d.get("platform_admin_owned") or d.get("billing_exempt"):
+            d["billing_status"] = "exempt"
+        else:
+            d["billing_status"] = d.get("billing_status") or "inactive"
         if search:
             s = search.lower()
             if s not in (d.get("name") or "").lower():

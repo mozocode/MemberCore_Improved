@@ -75,6 +75,7 @@ def _require_org_member(db, org_id: str, user_id: str):
 class CheckoutRequest(BaseModel):
     plan_id: str
     origin_url: str
+    amount: Optional[float] = None  # optional custom amount (e.g. pay remaining). If omitted, uses plan amount.
 
 
 class CreateEventCheckoutRequest(BaseModel):
@@ -159,12 +160,86 @@ def create_public_event_ticket_checkout(
                 "organization_name": org_name,
             },
             customer_email=user.get("email"),
-            success_url=f"{frontend_url}/directory?payment=success&session_id={{CHECKOUT_SESSION_ID}}&event_id={req.event_id}",
-            cancel_url=f"{frontend_url}/directory?payment=cancelled",
+            success_url=f"{frontend_url}/events/{req.event_id}?payment=success&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{frontend_url}/events/{req.event_id}?payment=cancelled",
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/public/confirm-event-ticket")
+def confirm_public_event_ticket(
+    session_id: str = Query(..., description="Stripe Checkout session ID from redirect"),
+    user_id: str = Depends(get_current_user_id),
+):
+    """After Stripe redirect from public event checkout: ensure ticket exists (idempotent). No org membership required."""
+    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    if not stripe_key:
+        return {"ok": True, "created": False}
+
+    import stripe
+    stripe.api_key = stripe_key
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+    except Exception:
+        return {"ok": True, "created": False}
+
+    if session.payment_status != "paid":
+        return {"ok": True, "created": False}
+    meta = session.get("metadata") or {}
+    if meta.get("type") != "event_ticket" or meta.get("user_id") != user_id:
+        return {"ok": True, "created": False}
+
+    _handle_event_ticket_purchase(session, get_firestore())
+    return {"ok": True, "created": True}
+
+
+@router.get("/public/event/{event_id}/my-ticket")
+def get_public_event_my_ticket(
+    event_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Return current user's ticket for this public event if they have one. No org membership required."""
+    db = get_firestore()
+    tickets = list(
+        db.collection("event_tickets")
+        .where("event_id", "==", event_id)
+        .where("user_id", "==", user_id)
+        .limit(1)
+        .stream()
+    )
+    if not tickets:
+        raise HTTPException(status_code=404, detail="No ticket found")
+    t = tickets[0]
+    td = t.to_dict()
+    org_id = td.get("organization_id")
+    if not org_id:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    short_code = _ensure_ticket_short_code(db, t.reference, org_id, td)
+    ev = db.collection("events").document(event_id).get()
+    ev_data = ev.to_dict() if ev.exists else {}
+    org_doc = db.collection("organizations").document(org_id).get()
+    org_name = org_doc.to_dict().get("name", "Organization") if org_doc.exists else "Organization"
+    return {
+        "ticket_id": td.get("ticket_id") or t.id,
+        "short_code": short_code,
+        "event_id": event_id,
+        "event_title": ev_data.get("title", "Event"),
+        "event_start_time": ev_data.get("start_time") or ev_data.get("event_date"),
+        "event_end_time": ev_data.get("end_time"),
+        "event_location": ev_data.get("location"),
+        "event_cover_image": ev_data.get("cover_image"),
+        "organization_id": org_id,
+        "organization_name": org_name,
+        "status": td.get("status", "valid"),
+        "checked_in": td.get("checked_in", False),
+        "checked_in_at": td.get("checked_in_at"),
+        "amount": td.get("amount", 0),
+        "quantity": int(td.get("quantity", 1)),
+        "purchased_at": td.get("created_at"),
+        "qr_code": td.get("qr_code"),
+    }
 
 
 @router.post("/{org_id}/checkout/event")
@@ -273,6 +348,54 @@ def create_dues_checkout(
     if pd.get("organization_id") != org_id:
         raise HTTPException(status_code=404, detail="Plan not found")
 
+    plan_total_required = pd.get("total_amount") if pd.get("total_amount") is not None else pd.get("amount", 0)
+    plan_total_required = float(plan_total_required)
+    installment_min = float(pd.get("amount", 0))
+
+    # Member's paid amount for this plan
+    plan_payment_docs = list(
+        db.collection("payments")
+        .where("organization_id", "==", org_id)
+        .where("member_id", "==", member_id)
+        .where("plan_id", "==", req.plan_id)
+        .stream()
+    )
+    paid_for_plan = sum(p.to_dict().get("amount", 0) for p in plan_payment_docs)
+    remaining = max(0.0, plan_total_required - paid_for_plan)
+
+    if remaining <= 0:
+        raise HTTPException(status_code=400, detail="Already paid in full for this plan")
+
+    payment_option = (pd.get("payment_option") or "full_only").strip().lower()
+    if payment_option not in ("full_only", "custom_only"):
+        payment_option = "full_only"
+    effective_min = min(installment_min, remaining)
+
+    if payment_option == "full_only":
+        charge_amount = remaining
+    elif payment_option == "custom_only":
+        if req.amount is None or req.amount <= 0:
+            raise HTTPException(status_code=400, detail="This plan requires a custom amount. Enter an amount.")
+        try:
+            custom_amount = float(req.amount)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid amount")
+        if custom_amount < effective_min:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Amount must be at least ${effective_min:.2f}" + (
+                    f" (remaining balance ${remaining:.2f})" if effective_min < installment_min else ""
+                ),
+            )
+        if custom_amount > remaining:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Amount cannot exceed remaining balance ${remaining:.2f}",
+            )
+        charge_amount = custom_amount
+    if charge_amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
     import os
     stripe_key = os.getenv("STRIPE_SECRET_KEY")
     if stripe_key:
@@ -285,7 +408,7 @@ def create_dues_checkout(
                     "price_data": {
                         "currency": "usd",
                         "product_data": {"name": pd.get("name", "Dues")},
-                        "unit_amount": int(float(pd.get("amount", 0)) * 100),
+                        "unit_amount": int(round(charge_amount * 100)),
                     },
                     "quantity": 1,
                 }],
@@ -309,7 +432,7 @@ def create_dues_checkout(
         "org_id": org_id,
         "member_id": member_id,
         "plan_id": req.plan_id,
-        "amount": pd.get("amount", 0),
+        "amount": charge_amount,
         "user_id": user["id"],
         "status": "pending",
         "created_at": datetime.now(timezone.utc),

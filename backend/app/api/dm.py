@@ -383,6 +383,7 @@ def list_dm_members(
             "name": name,
             "email": email,
             "avatar": ud.get("avatar"),
+            "role": md.get("role", "member"),
         })
     out.sort(key=lambda x: (x.get("name") or "").lower())
     return out

@@ -12,7 +12,7 @@ load_dotenv(_backend_dir / ".env")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, organizations, events, members, org_events, polls, documents, dues, payments, chat, analytics, dm
+from app.api import auth, organizations, events, members, org_events, polls, documents, dues, payments, billing, chat, analytics, dm
 from app.api.admin.router import admin_router
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,7 @@ app.include_router(polls.router, prefix="/api/polls", tags=["polls"])
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(dues.router, prefix="/api/dues", tags=["dues"])
 app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
+app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(dm.router, prefix="/api/organizations", tags=["dm"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])

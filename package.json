@@ -1,12 +1,46 @@
 {
   "name": "membercore",
   "private": true,
-  "description": "MemberCore monorepo – run deploy from here so Firebase uses this folder's .firebaserc (membercore-f0b3f)",
+  "description": "MemberCore monorepo – web, mobile, and shared packages",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
+    "dev": "concurrently -n web,be \"npm run dev -w @membercore/web\" \"cd backend && ./start.sh\"",
+    "build:web": "npm run build -w @membercore/web",
+    "build:packages": "npm run build -w @membercore/core -w @membercore/services",
+    "build:ipa": "cd apps/mobile && npx eas-cli build --profile testflight --platform ios",
+    "build:ios": "cd apps/mobile && npx eas-cli build --profile testflight --platform ios",
+    "build:apk": "cd apps/mobile && npx eas-cli build --profile preview --platform android",
+    "build:play": "cd apps/mobile && npx eas-cli build --profile production --platform android",
+    "submit:testflight": "cd apps/mobile && npx eas-cli submit --platform ios --profile testflight --latest",
+    "submit:play": "cd apps/mobile && npx eas-cli submit --platform android --profile production --latest",
+    "expo:update": "cd apps/mobile && npx expo install --fix",
+    "expo:export": "cd apps/mobile && npx expo export",
+    "expo:go": "cd apps/mobile && npx expo start",
+    "ensure:eas": "bash scripts/ensure-eas-ready.sh",
     "deploy:hosting": "firebase use membercore-f0b3f && firebase deploy --only hosting",
     "deploy:live": "bash scripts/deploy-live.sh",
     "deploy:backend": "bash scripts/deploy-backend-live.sh",
     "deploy:all": "bash scripts/deploy-all-live.sh",
     "firebase:use": "firebase use membercore-f0b3f"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "~5.6.2"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "@react-navigation/drawer": "^7.8.1",
+    "react": "^19.1.0",
+    "react-native-gesture-handler": "^2.28.0",
+    "react-native-reanimated": "~4.1.1",
+    "react-native-safe-area-context": "^5.6.0",
+    "react-native-screens": "^4.16.0",
+    "react-native-worklets": "0.5.1"
+  },
+  "overrides": {
+    "react-native-worklets": "0.5.1"
   }
 }

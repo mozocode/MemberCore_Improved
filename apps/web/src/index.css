@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 98%;
+    --card: 240 6% 10%;
+    --card-foreground: 0 0% 98%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 240 6% 10%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 6% 10%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 6% 10%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 6% 15%;
+    --input: 240 6% 15%;
+    --ring: 240 6% 83%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    background-color: #000;
+  }
+  body {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    background-color: #000;
+    @apply bg-background text-foreground antialiased;
+  }
+  #root {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    min-height: 100%;
+  }
+}
+
+/* Map view popup tip matches dark card (zinc-900) - tip points down when popup is above marker */
+.directory-popup .mapboxgl-popup-tip {
+  border-top-color: rgb(24 24 27);
+}
+
+/* Event overlay card: fade + scale in */
+@keyframes event-overlay-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.event-overlay-card {
+  animation: event-overlay-card-in 180ms ease-out;
+}
+
+/* Toast enter animation */
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.toast-enter {
+  animation: toast-enter 0.2s ease-out;
+}
+
+/* Prevent iOS text selection and callout in chat */
+[data-message-container],
+[data-message-container] * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+}

@@ -1,9 +1,23 @@
 # Dependencies & build
 node_modules/
+apps/web/dist/
 frontend/dist/
 backend/venv/
 __pycache__/
 *.pyc
+packages/*/dist/
+functions/lib/
+
+# React Native / Expo
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/.expo/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
 
 # Secrets & env (keep .env.example)
 .env
@@ -11,6 +25,8 @@ __pycache__/
 !*.env.example
 backend/service-account.json
 *-service-account*.json
+apps/mobile/google-services.json
+apps/mobile/google-service-account.json
 
 # IDE & OS
 .idea/

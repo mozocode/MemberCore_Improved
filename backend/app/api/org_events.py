@@ -224,9 +224,11 @@ def create_event(
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
-    """Create event. Admin/owner only. Posts to general chat."""
+    """Create event. Admin/owner only. Prospects (restricted) cannot create events."""
     db = get_firestore()
     role = _require_org_member(db, org_id, user["id"])
+    if role == "restricted":
+        raise HTTPException(status_code=403, detail="Prospects cannot create events")
     _require_admin_or_owner(role)
 
     event_id = generate_uuid()
