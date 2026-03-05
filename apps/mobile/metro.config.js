@@ -1,31 +1,29 @@
 /**
- * Metro config extending @expo/metro-config (required for EAS Build).
- * Customizations: monorepo watchFolders, resolver paths, and singleton blockList.
+ * Metro config for monorepo – extends @expo/metro-config.
+ * Tells Metro where to find workspace packages and hoisted node_modules.
  */
 const { getDefaultConfig } = require('@expo/metro-config')
 const path = require('path')
+const fs = require('fs')
 
 const projectRoot = __dirname
 const monorepoRoot = path.resolve(projectRoot, '../..')
 const rootModules = path.resolve(monorepoRoot, 'node_modules')
 const localModules = path.resolve(projectRoot, 'node_modules')
 
-// Start from Expo's default (extends @expo/metro-config)
 const config = getDefaultConfig(projectRoot)
 
 config.watchFolders = [monorepoRoot]
 
-// Root modules first so hoisted copies win
 config.resolver.nodeModulesPaths = [
-  rootModules,
   localModules,
+  rootModules,
 ]
 
 config.resolver.disableHierarchicalLookup = false
 
-// Block the local copies of native singleton packages so Metro
-// can only find the single root copy. This prevents the
-// "Tried to register two views with the same name" crash.
+// Only block local copies of singleton native packages when the hoisted
+// copy exists at the monorepo root. On EAS Build the layout may differ.
 const singletonPackages = [
   'react-native-safe-area-context',
   'react-native-screens',
@@ -40,16 +38,20 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-const blockPatterns = singletonPackages.map((pkg) => {
-  const blocked = path.resolve(localModules, pkg)
-  return new RegExp('^' + escapeRegExp(blocked) + '[\\\\/].*$')
-})
+const blockPatterns = []
+for (const pkg of singletonPackages) {
+  const localCopy = path.resolve(localModules, pkg)
+  const rootCopy = path.resolve(rootModules, pkg)
+  if (fs.existsSync(localCopy) && fs.existsSync(rootCopy) && localCopy !== rootCopy) {
+    blockPatterns.push(new RegExp('^' + escapeRegExp(localCopy) + '[\\\\/].*$'))
+  }
+}
 
-const existingBlockList = config.resolver.blockList || []
-const allBlocked = Array.isArray(existingBlockList)
-  ? [...existingBlockList, ...blockPatterns]
-  : [existingBlockList, ...blockPatterns].filter(Boolean)
-
-config.resolver.blockList = allBlocked
+if (blockPatterns.length > 0) {
+  const existing = config.resolver.blockList || []
+  config.resolver.blockList = Array.isArray(existing)
+    ? [...existing, ...blockPatterns]
+    : [existing, ...blockPatterns].filter(Boolean)
+}
 
 module.exports = config
