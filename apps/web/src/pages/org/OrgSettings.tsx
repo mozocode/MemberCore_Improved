@@ -36,6 +36,7 @@ import {
   Lock,
   Trash2,
   Edit2,
+  Upload,
 } from 'lucide-react'
 import { CreateOrgDocumentModal } from '@/components/CreateOrgDocumentModal'
 import { CreateTemplateModal } from '@/components/CreateTemplateModal'
@@ -2996,9 +2997,11 @@ function SettingsMembers({ orgId }: { orgId: string }) {
   const [currentUserRole, setCurrentUserRole] = useState<string>('member')
   const [searchQuery, setSearchQuery] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [removeModal, setRemoveModal] = useState<MemberRowType | null>(null)
+  const csvInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!orgId) return
@@ -3121,6 +3124,33 @@ function SettingsMembers({ orgId }: { orgId: string }) {
     }
   }
 
+  const handleImportCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setActionMessage(null)
+    setImporting(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('send_invites', 'true')
+      const { data } = await api.post<{ imported_count: number; skipped_count: number; invites_sent?: number }>(
+        `/organizations/${orgId}/members/import-csv`,
+        form,
+      )
+      setActionMessage({
+        type: 'success',
+        text: `Imported ${data.imported_count} member${data.imported_count !== 1 ? 's' : ''} and sent ${data.invites_sent ?? 0} invitation${(data.invites_sent ?? 0) !== 1 ? 's' : ''}. ${data.skipped_count} row(s) skipped.`,
+      })
+      fetchMembers()
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setActionMessage({ type: 'error', text: typeof detail === 'string' ? detail : 'Import failed. Please check your CSV format and try again.' })
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const pending = allMembers.filter((m) => m.status === 'pending')
   const approved = allMembers.filter((m) => m.status === 'approved')
   const query = searchQuery.trim().toLowerCase()
@@ -3133,6 +3163,7 @@ function SettingsMembers({ orgId }: { orgId: string }) {
       )
     : approved
 
+  const canImport = currentUserRole === 'owner' || currentUserRole === 'admin'
   const currentUserId = authUser?.id ?? ''
   const canChangeRole = (member: MemberRowType) => {
     if (member.user_id === currentUserId) return false
@@ -3226,6 +3257,27 @@ function SettingsMembers({ orgId }: { orgId: string }) {
                 <Search size={16} />
               </span>
             </div>
+            {canImport && (
+              <>
+                <input
+                  ref={csvInputRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={handleImportCsv}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => csvInputRef.current?.click()}
+                  disabled={importing}
+                  className="bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700 shrink-0 sm:self-auto"
+                >
+                  {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload size={16} />}
+                  <span className="ml-2">{importing ? 'Importing...' : 'Import CSV'}</span>
+                </Button>
+              </>
+            )}
             <Button
               variant="outline"
               size="sm"
