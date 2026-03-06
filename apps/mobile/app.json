@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -16,9 +17,6 @@
       "bundleIdentifier": "com.membercore.app",
       "buildNumber": "1",
       "infoPlist": {
-        "UIBackgroundModes": [
-          "remote-notification"
-        ],
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "MemberCore uses your camera to scan QR codes for event check-in.",
         "NSPhotoLibraryUsageDescription": "MemberCore uses your photos for profile pictures and event images."
@@ -40,7 +38,6 @@
       ]
     },
     "plugins": [
-      "expo-notifications",
       "expo-asset",
       "expo-font",
       "expo-image-picker"
