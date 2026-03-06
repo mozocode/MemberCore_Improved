@@ -11,7 +11,8 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native'
-import type { DrawerNavigationProp } from '@react-navigation/drawer'
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs'
+import type { OrgDrawerParamList } from '../navigation/types'
 import { Feather } from '@expo/vector-icons'
 import { organizationService, getApi } from '@membercore/services'
 import { colors, MIN_TOUCH_TARGET } from '../theme'
@@ -66,7 +67,7 @@ const NAV_ITEMS: { id: string; tab: string; icon: keyof typeof Feather.glyphMap;
 export function OrgHomeScreen({ route }: any) {
   const { orgId } = route.params
   const insets = useSafeAreaInsets()
-  const nav = useNavigation<DrawerNavigationProp<any>>()
+  const nav = useNavigation<BottomTabNavigationProp<OrgDrawerParamList, 'Home'>>()
   const [org, setOrg] = useState<Org | null>(null)
   const [loading, setLoading] = useState(true)
   const [myRole, setMyRole] = useState<string | null>(null)
@@ -187,7 +188,7 @@ export function OrgHomeScreen({ route }: any) {
             )}
             <TouchableOpacity
               style={styles.goProButton}
-              onPress={() => nav.navigate('Settings')}
+              onPress={() => nav.navigate('More', { orgId, screen: 'Settings', params: { orgId } })}
               activeOpacity={0.7}
             >
               <Text style={styles.goProText}>Go Pro</Text>
@@ -203,7 +204,13 @@ export function OrgHomeScreen({ route }: any) {
             key={id}
             style={styles.navCard}
             activeOpacity={0.7}
-            onPress={() => nav.navigate(tab as any)}
+            onPress={() => {
+              if (tab === 'Chat' || tab === 'Calendar' || tab === 'Members') {
+                nav.navigate(tab, { orgId })
+              } else {
+                nav.navigate('More', { orgId, screen: tab, params: { orgId } })
+              }
+            }}
           >
             <View style={[styles.navIconBox, { backgroundColor: iconColor + '30' }]}>
               <Feather name={icon} size={24} color={iconColor} />

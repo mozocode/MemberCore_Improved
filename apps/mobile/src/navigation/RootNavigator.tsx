@@ -99,13 +99,13 @@ export function RootNavigator() {
         break
       case 'dm':
       case 'direct_message':
-        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Messages', params: { orgId: org_id } })
+        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'More', params: { orgId: org_id, screen: 'Messages', params: { orgId: org_id } } })
         break
       case 'poll':
-        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Polls', params: { orgId: org_id } })
+        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'More', params: { orgId: org_id, screen: 'Polls', params: { orgId: org_id } } })
         break
       case 'dues':
-        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Dues', params: { orgId: org_id } })
+        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'More', params: { orgId: org_id, screen: 'Dues', params: { orgId: org_id } } })
         break
       default:
         navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Home', params: { orgId: org_id } })

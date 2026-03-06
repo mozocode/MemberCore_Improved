@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import type { DrawerScreenProps } from '@react-navigation/drawer'
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs'
 import type { CompositeScreenProps, NavigatorScreenParams } from '@react-navigation/native'
 
 export type RootStackParamList = {
@@ -29,7 +29,7 @@ export type OrgDrawerParamList = {
   Dues: { orgId: string }
   Documents: { orgId: string }
   Polls: { orgId: string }
-  More: { orgId: string }
+  More: { orgId: string; screen?: string; params?: { orgId: string } }
   Settings: { orgId: string }
 }
 
@@ -48,7 +48,7 @@ export type RootStackScreenProps<T extends keyof RootStackParamList> =
 
 export type OrgDrawerScreenProps<T extends keyof OrgDrawerParamList> =
   CompositeScreenProps<
-    DrawerScreenProps<OrgDrawerParamList, T>,
+    BottomTabScreenProps<OrgDrawerParamList, T>,
     NativeStackScreenProps<RootStackParamList>
   >
 

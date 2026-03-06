@@ -1,7 +1,9 @@
 # Dependencies & build
 node_modules/
 apps/web/dist/
+apps/mobile/dist/
 frontend/dist/
+.firebase/
 backend/venv/
 __pycache__/
 *.pyc

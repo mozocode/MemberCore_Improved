@@ -1,131 +1,61 @@
 import React from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native'
-import { BILLING_MANAGED_ON_WEB_MESSAGE } from '@membercore/core'
-import { useAuth } from '../contexts/AuthContext'
-import { useBillingGate } from '../hooks/useBillingGate'
-import type { OrgTabScreenProps } from '../navigation/types'
-import { colors, spacing, fontSizes, radii } from '../theme'
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
+import { Feather } from '@expo/vector-icons'
+import { useNavigation } from '@react-navigation/native'
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
+type MoreStackParamList = {
+  MoreRoot: { orgId: string }
+  Messages: { orgId: string }
+  Directory: { orgId: string }
+  Dues: { orgId: string }
+  Documents: { orgId: string }
+  Polls: { orgId: string }
+  Settings: { orgId: string }
+}
 
-export function MoreScreen({ route }: OrgTabScreenProps<'More'>) {
-  const { orgId } = route.params
-  const { user, signout } = useAuth()
-  const { billing, isActive } = useBillingGate(orgId)
+type MoreNav = NativeStackNavigationProp<MoreStackParamList, 'MoreRoot'>
 
-  const handleSignOut = () => {
-    Alert.alert('Sign Out', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: signout },
-    ])
-  }
+const ITEMS: { name: keyof Omit<MoreStackParamList, 'MoreRoot'>; label: string; icon: keyof typeof Feather.glyphMap }[] = [
+  { name: 'Messages', label: 'Messages', icon: 'mail' },
+  { name: 'Directory', label: 'Directory', icon: 'map-pin' },
+  { name: 'Dues', label: 'Dues', icon: 'dollar-sign' },
+  { name: 'Documents', label: 'Documents', icon: 'file-text' },
+  { name: 'Polls', label: 'Polls', icon: 'bar-chart-2' },
+  { name: 'Settings', label: 'Settings', icon: 'settings' },
+]
 
-  const planLabel = billing?.plan === 'pro' ? 'Pro' : 'Free'
-  const statusColor = isActive ? colors.success : colors.danger
+export function MoreScreen({ route }: { route: { params: { orgId: string } } }) {
+  const navigation = useNavigation<MoreNav>()
+  const orgId = route.params?.orgId ?? ''
 
   return (
     <View style={styles.container}>
-      <View style={styles.profileCard}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{(user?.name || '?')[0].toUpperCase()}</Text>
-        </View>
-        <View style={styles.profileInfo}>
-          <Text style={styles.name}>{user?.name}</Text>
-          <Text style={styles.email}>{user?.email}</Text>
-        </View>
-      </View>
-
-      {/* Subscription status — read-only, no purchase CTAs */}
-      <View style={styles.billingCard}>
-        <View style={styles.billingRow}>
-          <Text style={styles.billingLabel}>Plan</Text>
-          <Text style={styles.billingValue}>{planLabel}</Text>
-        </View>
-        <View style={styles.billingRow}>
-          <Text style={styles.billingLabel}>Status</Text>
-          <Text style={[styles.billingValue, { color: statusColor }]}>
-            {isActive ? 'Active' : 'Inactive'}
-          </Text>
-        </View>
-        <View style={styles.billingDivider} />
-        <Text style={styles.billingNote}>{BILLING_MANAGED_ON_WEB_MESSAGE}</Text>
-      </View>
-
-      <View style={styles.section}>
-        <TouchableOpacity style={styles.menuItem}>
-          <Text style={styles.menuText}>Polls</Text>
+      {ITEMS.map(({ name, label, icon }) => (
+        <TouchableOpacity
+          key={name}
+          style={styles.row}
+          onPress={() => navigation.navigate(name, { orgId })}
+          activeOpacity={0.7}
+        >
+          <Feather name={icon} size={24} color="#a1a1aa" />
+          <Text style={styles.label}>{label}</Text>
+          <Feather name="chevron-right" size={20} color="#52525b" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.menuItem}>
-          <Text style={styles.menuText}>Documents</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuItem}>
-          <Text style={styles.menuText}>Settings</Text>
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
-        <Text style={styles.signOutText}>Sign Out</Text>
-      </TouchableOpacity>
+      ))}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
-  profileCard: {
+  container: { flex: 1, backgroundColor: '#09090b', paddingTop: 8 },
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: radii.full,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.lg,
-  },
-  avatarText: { color: colors.white, fontSize: fontSizes.xl, fontWeight: '700' },
-  profileInfo: { flex: 1 },
-  name: { color: colors.text, fontSize: fontSizes.lg, fontWeight: '600' },
-  email: { color: colors.textSecondary, fontSize: fontSizes.sm, marginTop: 2 },
-  billingCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginTop: spacing.lg,
-  },
-  billingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  billingLabel: { color: colors.textSecondary, fontSize: fontSizes.sm },
-  billingValue: { color: colors.text, fontSize: fontSizes.md, fontWeight: '600' },
-  billingDivider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
-  billingNote: { color: colors.textMuted, fontSize: fontSizes.xs, textAlign: 'center' },
-  section: { marginTop: spacing.xl },
-  menuItem: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.md,
-    padding: spacing.lg,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  menuText: { color: colors.text, fontSize: fontSizes.md },
-  signOutBtn: {
-    backgroundColor: colors.danger,
-    borderRadius: radii.md,
     paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: spacing.xxl,
+    paddingHorizontal: 20,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#27272a',
+    gap: 16,
   },
-  signOutText: { color: colors.white, fontSize: fontSizes.md, fontWeight: '600' },
+  label: { flex: 1, fontSize: 17, color: '#fafafa', fontWeight: '500' },
 })

@@ -330,7 +330,7 @@ const styles = StyleSheet.create({
   calloutCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 16, padding: 16, backgroundColor: COLORS.card, borderLeftWidth: 4, borderLeftColor: COLORS.accent, borderRadius: 12 },
   calloutText: { fontSize: 14, color: COLORS.text, flex: 1 },
   stepRow: { flexDirection: 'row', gap: 16, marginBottom: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, padding: 16 },
-  stepNumber: { width: 48, height: 48, borderRadius: 24, backgroundColor: COLORS.accent, alignItems: 'center', justifyContent: 'center', shrink: 0 },
+  stepNumber: { width: 48, height: 48, borderRadius: 24, backgroundColor: COLORS.accent, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   stepNumberText: { fontSize: 18, fontWeight: '700', color: COLORS.text },
   stepBody: { flex: 1, minWidth: 0 },
   stepTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text, marginBottom: 4 },

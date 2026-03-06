@@ -54,7 +54,10 @@ const linking: LinkingOptions<any> = {
     ])
     return url
   },
-  subscribe: Linking.addEventListener,
+  subscribe(listener: (url: string) => void) {
+    const sub = Linking.addEventListener('url', (e: { url: string }) => listener(e.url))
+    return () => sub.remove()
+  },
   config: {
     screens: {
       Auth: {
