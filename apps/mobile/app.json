@@ -19,6 +19,7 @@
         "UIBackgroundModes": [
           "remote-notification"
         ],
+        "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "MemberCore uses your camera to scan QR codes for event check-in.",
         "NSPhotoLibraryUsageDescription": "MemberCore uses your photos for profile pictures and event images."
       }
