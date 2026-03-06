@@ -4,10 +4,14 @@ const API_URL = import.meta.env.VITE_BACKEND_URL || '/api'
 
 export const api = axios.create({
   baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
   timeout: 30000, // 30s to allow backend/Firebase cold start
+})
+
+api.interceptors.request.use((config) => {
+  if (!(config.data instanceof FormData)) {
+    config.headers['Content-Type'] = config.headers['Content-Type'] || 'application/json'
+  }
+  return config
 })
 
 api.interceptors.request.use((config) => {

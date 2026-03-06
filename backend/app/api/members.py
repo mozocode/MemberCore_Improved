@@ -296,8 +296,13 @@ def _parse_csv_row(row: list, headers: dict) -> Optional[dict]:
     email = get("email")
     if not email or not _EMAIL_RE.match(email):
         return None
-    first = get("first_name") or get("first name")
-    last = get("last_name") or get("last name")
+    first = get("first_name") or get("first name") or get("firstname")
+    last = get("last_name") or get("last name") or get("lastname")
+    full_name = get("name") or get("full_name") or get("full name") or get("fullname")
+    if full_name and not first and not last:
+        parts = full_name.split(None, 1)
+        first = parts[0] if parts else ""
+        last = parts[1] if len(parts) > 1 else ""
     role_raw = (get("role") or "member").lower()
     role = role_raw if role_raw in ("admin", "member", "restricted") else "member"
     nickname = (get("nickname") or "").strip() or None
