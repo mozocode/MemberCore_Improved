@@ -1,5 +1,5 @@
 import React from 'react'
-import { View, Text, ScrollView, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { NavigationContainer, DarkTheme, LinkingOptions } from '@react-navigation/native'
@@ -47,6 +47,14 @@ const prefix = Linking.createURL('/')
 
 const linking: LinkingOptions<any> = {
   prefixes: [prefix, 'membercore://'],
+  async getInitialURL() {
+    const url = await Promise.race([
+      Linking.getInitialURL(),
+      new Promise<string | null>((r) => setTimeout(() => r(null), 2000)),
+    ])
+    return url
+  },
+  subscribe: Linking.addEventListener,
   config: {
     screens: {
       Auth: {
@@ -103,7 +111,16 @@ export default function App() {
     <ErrorBoundary>
       <RootView style={{ flex: 1 }}>
         <SafeAreaProvider>
-          <NavigationContainer ref={navigationRef} theme={navTheme} linking={linking}>
+          <NavigationContainer
+            ref={navigationRef}
+            theme={navTheme}
+            linking={linking}
+            fallback={
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
+                <ActivityIndicator size="large" color={colors.primary} />
+              </View>
+            }
+          >
             <AuthProvider>
               <StatusBar style="light" />
               <NetworkBanner />
