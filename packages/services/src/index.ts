@@ -22,11 +22,12 @@ export {
   OfflineQueue,
   executeAction,
   useOfflineQueue,
-  webStorageAdapter,
-  webNetworkAdapter,
   createNativeStorageAdapter,
   createNativeNetworkAdapter,
 } from './offline'
+
+// Web-only adapters — import from '@membercore/services/offline/adapters.web' directly
+// to keep localStorage / window references out of React Native bundles.
 
 // TanStack Query hooks and keys
 export {

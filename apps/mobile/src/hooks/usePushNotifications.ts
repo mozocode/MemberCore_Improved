@@ -1,18 +1,22 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { Platform, Alert } from 'react-native'
+import { Platform } from 'react-native'
 import * as Notifications from 'expo-notifications'
 import Constants from 'expo-constants'
 import { getApi } from '@membercore/services'
 
-Notifications.setNotificationHandler({
-  handleNotification: async (): Promise<Notifications.NotificationBehavior> => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-})
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async (): Promise<Notifications.NotificationBehavior> => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  })
+} catch (_) {
+  // Swallow so a native module issue doesn't crash the whole app at import
+}
 
 export function usePushNotifications(
   userId: string | undefined,
