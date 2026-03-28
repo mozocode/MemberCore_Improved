@@ -3,7 +3,6 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import {
   DollarSign,
   Loader2,
-  Check,
   CreditCard,
   Calendar,
   FileText,
@@ -231,7 +230,18 @@ export function OrgDues() {
                           <DollarSign size={20} className="text-zinc-400" />
                         </div>
                         <div className="min-w-0">
-                          <span className="font-medium text-white">{plan.name}</span>
+                          <div className="flex flex-wrap items-center gap-2 gap-y-1">
+                            <span className="font-medium text-white">{plan.name}</span>
+                            {planPaidInFull ? (
+                              <span className="rounded-full border border-green-500/35 bg-green-500/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400">
+                                Paid in full
+                              </span>
+                            ) : waivedNoBalance ? (
+                              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300/90">
+                                No payment due
+                              </span>
+                            ) : null}
+                          </div>
                           <p className="text-sm text-zinc-500">
                             ${plan.amount.toFixed(2)} installment
                             {plan.installment_months ? ` x ${plan.installment_months} months` : ''}
@@ -249,17 +259,7 @@ export function OrgDues() {
                         </div>
                       </div>
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full sm:w-auto">
-                        {planPaidInFull ? (
-                          <span className="inline-flex items-center gap-1 text-green-400 text-sm font-medium">
-                            <Check size={16} />
-                            Paid in full
-                          </span>
-                        ) : waivedNoBalance ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-400/90 text-sm">
-                            <Check size={16} />
-                            No payment due
-                          </span>
-                        ) : plan.payment_option === 'custom_only' ? (
+                        {!noPayNeeded && plan.payment_option === 'custom_only' ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -270,7 +270,7 @@ export function OrgDues() {
                             <CreditCard size={16} className="shrink-0" />
                             <span className="ml-1">Pay Custom Amount (${plan.amount.toFixed(2)} minimum)</span>
                           </Button>
-                        ) : plan.payment_option === 'installment_only' ? (
+                        ) : !noPayNeeded && plan.payment_option === 'installment_only' ? (
                           <Button
                             size="sm"
                             onClick={() => handlePayPlan(plan.id, Math.min(plan.amount, remaining))}
@@ -282,7 +282,7 @@ export function OrgDues() {
                               Pay installment (${Math.min(plan.amount, remaining).toFixed(2)})
                             </span>
                           </Button>
-                        ) : (
+                        ) : !noPayNeeded ? (
                           <Button
                             size="sm"
                             onClick={() => handlePayPlan(plan.id)}
@@ -292,7 +292,7 @@ export function OrgDues() {
                             {payingPlanId === plan.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard size={16} />}
                             <span className="ml-1">Pay full amount (${remaining.toFixed(2)})</span>
                           </Button>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   )

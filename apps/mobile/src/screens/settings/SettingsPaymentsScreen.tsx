@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
@@ -36,13 +36,29 @@ interface TreasuryStats {
   pending_count: number
 }
 
+interface MemberPlanBalanceRow {
+  plan_id: string
+  plan_name: string
+  total: number
+  paid: number
+  paid_in_full: boolean
+}
+
 interface MemberStatusRow {
   member_id: string
-  name: string
+  name?: string
+  user_name?: string
+  nickname?: string
   title?: string
   total_paid: number
   status: string
   paid_in_full?: boolean
+  dues_waived?: boolean
+  plan_balances?: MemberPlanBalanceRow[]
+}
+
+function memberRowDisplayName(m: MemberStatusRow): string {
+  return m.name || m.user_name || m.nickname || 'Member'
 }
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
@@ -101,6 +117,11 @@ export function SettingsPaymentsScreen({
 
   // Terminology picker
   const [showTermPicker, setShowTermPicker] = useState(false)
+
+  const treasuryPlansTotal = useMemo(
+    () => plans.reduce((s, p) => s + (p.total_amount ?? p.amount ?? 0), 0),
+    [plans],
+  )
 
   const fetchPlans = useCallback(async () => {
     try {
@@ -409,33 +430,75 @@ export function SettingsPaymentsScreen({
           {/* Members */}
           <Text style={styles.membersHeading}>Members</Text>
           {members.map((m) => {
-            const sc = STATUS_COLORS[m.status] || STATUS_COLORS.pending
-            const sl = STATUS_LABELS[m.status] || m.status
-            const initial = (m.name || '?').charAt(0).toUpperCase()
+            const paid = m.total_paid ?? 0
+            const req = treasuryPlansTotal
+            let aggBg = (STATUS_COLORS[m.status] || STATUS_COLORS.pending).bg
+            let aggText = (STATUS_COLORS[m.status] || STATUS_COLORS.pending).text
+            let aggLabel = STATUS_LABELS[m.status] || m.status
+            if (req > 0 && paid >= req) {
+              aggLabel = 'Paid up'
+              aggBg = 'rgba(34,197,94,0.2)'
+              aggText = '#4ade80'
+            } else if (m.dues_waived || (m.status === 'paid_in_full' && paid < req)) {
+              aggLabel = 'Waived'
+              aggBg = 'rgba(59,130,246,0.2)'
+              aggText = '#60a5fa'
+            }
+            const displayName = memberRowDisplayName(m)
+            const initial = (displayName || '?').charAt(0).toUpperCase()
             return (
-              <View key={m.member_id} style={styles.memberRow}>
-                <View style={styles.memberAvatar}>
-                  <Text style={styles.memberAvatarText}>{initial}</Text>
+              <View key={m.member_id} style={styles.memberBlock}>
+                <View style={styles.memberRow}>
+                  <View style={styles.memberAvatar}>
+                    <Text style={styles.memberAvatarText}>{initial}</Text>
+                  </View>
+                  <View style={styles.memberInfo}>
+                    <Text style={styles.memberName}>{displayName}</Text>
+                    <Text style={styles.memberSub}>{m.title || `$${paid.toFixed(2)} paid`}</Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: aggBg }]}>
+                    <Text style={[styles.statusBadgeText, { color: aggText }]}>{aggLabel}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.markPaidBtn, m.paid_in_full && { opacity: 0.65 }]}
+                    onPress={() => handleMarkPaidInFull(m.member_id, !!m.paid_in_full)}
+                    disabled={markingMemberId === m.member_id || m.paid_in_full}
+                    activeOpacity={0.7}
+                  >
+                    {markingMemberId === m.member_id ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.markPaidBtnText}>
+                        {m.paid_in_full ? (m.dues_waived ? 'Waived' : 'Paid up') : 'Waive balance'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
                 </View>
-                <View style={styles.memberInfo}>
-                  <Text style={styles.memberName}>{m.name}</Text>
-                  <Text style={styles.memberSub}>{m.title || `$${(m.total_paid ?? 0).toFixed(2)} paid`}</Text>
-                </View>
-                <View style={[styles.statusBadge, { backgroundColor: sc.bg }]}>
-                  <Text style={[styles.statusBadgeText, { color: sc.text }]}>{sl}</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.markPaidBtn}
-                  onPress={() => handleMarkPaidInFull(m.member_id, !!m.paid_in_full)}
-                  disabled={markingMemberId === m.member_id}
-                  activeOpacity={0.7}
-                >
-                  {markingMemberId === m.member_id ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.markPaidBtnText}>Mark Paid in Full</Text>
-                  )}
-                </TouchableOpacity>
+                {m.plan_balances && m.plan_balances.length > 0 ? (
+                  <View style={styles.planBalancesWrap}>
+                    <Text style={styles.planBalancesHeading}>By plan</Text>
+                    {m.plan_balances.map((row) => {
+                      const due = Math.max(0, row.total - row.paid)
+                      return (
+                        <View key={row.plan_id} style={styles.planBalanceRow}>
+                          <Text style={styles.planBalanceName} numberOfLines={1}>
+                            {row.plan_name}
+                          </Text>
+                          <Text style={styles.planBalanceNums}>
+                            ${row.paid.toFixed(2)} / ${row.total.toFixed(2)}
+                          </Text>
+                          {row.paid_in_full ? (
+                            <View style={styles.paidInFullPill}>
+                              <Text style={styles.paidInFullPillText}>Paid in full</Text>
+                            </View>
+                          ) : (
+                            <Text style={styles.planBalanceDue}>${due.toFixed(2)} due</Text>
+                          )}
+                        </View>
+                      )
+                    })}
+                  </View>
+                ) : null}
               </View>
             )
           })}
@@ -554,7 +617,9 @@ export function SettingsPaymentsScreen({
                     onPress={() => setRecordMemberId(m.member_id)}
                     activeOpacity={0.7}
                   >
-                    <Text style={[styles.memberPickerText, recordMemberId === m.member_id && { color: '#ffffff' }]}>{m.name}</Text>
+                    <Text style={[styles.memberPickerText, recordMemberId === m.member_id && { color: '#ffffff' }]}>
+                      {memberRowDisplayName(m)}
+                    </Text>
                     {recordMemberId === m.member_id && <Feather name="check" size={16} color="#3b82f6" />}
                   </TouchableOpacity>
                 ))}
@@ -699,13 +764,42 @@ const styles = StyleSheet.create({
 
   /* Members */
   membersHeading: { color: '#ffffff', fontSize: 15, fontWeight: '600', marginBottom: 10 },
+  memberBlock: { marginBottom: 10 },
+  planBalancesWrap: {
+    backgroundColor: '#18181b',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    padding: 10,
+    marginTop: 4,
+    marginLeft: 46,
+  },
+  planBalancesHeading: { color: '#71717a', fontSize: 10, fontWeight: '700', letterSpacing: 0.6, marginBottom: 8, textTransform: 'uppercase' },
+  planBalanceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  planBalanceName: { color: '#e4e4e7', fontSize: 13, fontWeight: '600', flex: 1, minWidth: 100 },
+  planBalanceNums: { color: '#71717a', fontSize: 11 },
+  planBalanceDue: { color: '#fbbf24', fontSize: 11, fontWeight: '600' },
+  paidInFullPill: {
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.4)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  paidInFullPillText: { color: '#4ade80', fontSize: 9, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#27272a',
     borderRadius: 10,
     padding: 12,
-    marginBottom: 8,
     gap: 10,
   },
   memberAvatar: {

@@ -175,7 +175,18 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
                   <Feather name="dollar-sign" size={20} color="#a1a1aa" />
                 </View>
                 <View style={styles.planInfo}>
-                  <Text style={styles.planName}>{plan.name}</Text>
+                  <View style={styles.planNameRow}>
+                    <Text style={styles.planName}>{plan.name}</Text>
+                    {planPaidInFull ? (
+                      <View style={styles.paidInFullBadge}>
+                        <Text style={styles.paidInFullBadgeText}>Paid in full</Text>
+                      </View>
+                    ) : waivedNoBalance ? (
+                      <View style={styles.noPaymentBadge}>
+                        <Text style={styles.noPaymentBadgeText}>No payment due</Text>
+                      </View>
+                    ) : null}
+                  </View>
                   <Text style={styles.planAmount}>
                     Total: {formatCurrency(total)}
                   </Text>
@@ -184,11 +195,7 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
                       Due: {formatDate(plan.due_date)}
                     </Text>
                   )}
-                  {planPaidInFull ? (
-                    <Text style={styles.planPaidInFull}>Paid in full</Text>
-                  ) : waivedNoBalance ? (
-                    <Text style={styles.planWaived}>No payment due</Text>
-                  ) : remaining > 0 ? (
+                  {!planPaidInFull && !waivedNoBalance && remaining > 0 ? (
                     <Text style={styles.planRemaining}>
                       Remaining: {formatCurrency(remaining)}
                     </Text>
@@ -339,11 +346,47 @@ const styles = StyleSheet.create({
   planInfo: {
     flex: 1,
   },
+  planNameRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
   planName: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '600',
-    marginBottom: 4,
+  },
+  paidInFullBadge: {
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.45)',
+    backgroundColor: 'rgba(34,197,94,0.14)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  paidInFullBadgeText: {
+    color: '#4ade80',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  noPaymentBadge: {
+    borderWidth: 1,
+    borderColor: 'rgba(110,231,183,0.35)',
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  noPaymentBadgeText: {
+    color: '#6ee7b7',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
   },
   planAmount: {
     color: '#a1a1aa',
@@ -356,18 +399,6 @@ const styles = StyleSheet.create({
   },
   planRemaining: {
     color: '#f59e0b',
-    fontSize: 13,
-    fontWeight: '500',
-    marginTop: 2,
-  },
-  planPaidInFull: {
-    color: '#4ade80',
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  planWaived: {
-    color: '#6ee7b7',
     fontSize: 13,
     fontWeight: '500',
     marginTop: 2,

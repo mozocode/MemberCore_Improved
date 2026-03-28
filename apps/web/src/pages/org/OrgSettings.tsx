@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { useParams, useNavigate, useLocation, useSearchParams, Link } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { hasPermission, type OrgRole } from '@/lib/permissions'
@@ -1193,6 +1193,14 @@ interface TreasuryStats {
   past_due_count: number
 }
 
+interface MemberPlanBalanceRow {
+  plan_id: string
+  plan_name: string
+  total: number
+  paid: number
+  paid_in_full: boolean
+}
+
 interface MemberStatusRow {
   member_id: string
   user_id: string
@@ -1203,7 +1211,9 @@ interface MemberStatusRow {
   title?: string
   total_paid: number
   paid_in_full: boolean
+  dues_waived?: boolean
   status: string
+  plan_balances?: MemberPlanBalanceRow[]
 }
 
 interface MemberPaymentRow {
@@ -1601,6 +1611,11 @@ function SettingsDues({ orgId }: { orgId: string }) {
     }
   }
 
+  const treasuryTotalRequired = useMemo(
+    () => plans.reduce((s, p) => s + Number(p.total_amount ?? p.amount ?? 0), 0),
+    [plans],
+  )
+
   const statusBadge = (status: string) => {
     const map: Record<string, string> = {
       paid_in_full: 'bg-blue-500/20 text-blue-400',
@@ -1620,6 +1635,19 @@ function SettingsDues({ orgId }: { orgId: string }) {
         {label[status] ?? status}
       </span>
     )
+  }
+
+  /** Member row: no macro "Paid in Full" — use Paid up / Waived / partial statuses; per-plan "Paid in full" lives in plan_balances. */
+  const treasuryMemberAggregateBadge = (m: MemberStatusRow) => {
+    const paid = m.total_paid ?? 0
+    const req = treasuryTotalRequired
+    if (req > 0 && paid >= req) {
+      return <span className="px-2 py-1 rounded text-xs font-medium bg-green-500/20 text-green-400">Paid up</span>
+    }
+    if (m.dues_waived || (m.status === 'paid_in_full' && req > 0 && paid < req)) {
+      return <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-400">Waived</span>
+    }
+    return statusBadge(m.status)
   }
 
   return (
@@ -1773,7 +1801,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
                           </div>
                         </button>
                         <div className="flex items-center gap-2 shrink-0">
-                          {statusBadge(m.status)}
+                          {treasuryMemberAggregateBadge(m)}
                           <Button
                             size="sm"
                             variant="outline"
@@ -1781,12 +1809,51 @@ function SettingsDues({ orgId }: { orgId: string }) {
                             disabled={markingMemberId === m.member_id || m.paid_in_full}
                             className="text-xs bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
                           >
-                            {markingMemberId === m.member_id ? <Loader2 className="h-3 w-3 animate-spin" /> : m.paid_in_full ? 'Paid in Full' : 'Mark Paid in Full'}
+                            {markingMemberId === m.member_id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : m.paid_in_full ? (
+                              m.dues_waived ? (
+                                'Waived'
+                              ) : (
+                                'Paid up'
+                              )
+                            ) : (
+                              'Waive balance'
+                            )}
                           </Button>
                         </div>
                       </div>
+                      {m.plan_balances && m.plan_balances.length > 0 ? (
+                        <div className="px-3 pb-2">
+                          <div className="rounded-md border border-zinc-700 bg-zinc-950/80 px-3 py-2">
+                            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 mb-2">By plan</p>
+                            <ul className="space-y-2">
+                              {m.plan_balances.map((row) => {
+                                const due = Math.max(0, row.total - row.paid)
+                                return (
+                                  <li key={row.plan_id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                                    <span className="text-zinc-200 font-medium truncate min-w-0">{row.plan_name}</span>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <span className="text-zinc-500 text-xs tabular-nums">
+                                        ${row.paid.toFixed(2)} / ${row.total.toFixed(2)}
+                                      </span>
+                                      {row.paid_in_full ? (
+                                        <span className="rounded-full border border-green-500/35 bg-green-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400">
+                                          Paid in full
+                                        </span>
+                                      ) : (
+                                        <span className="text-amber-400 text-xs tabular-nums">${due.toFixed(2)} due</span>
+                                      )}
+                                    </div>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </div>
+                        </div>
+                      ) : null}
                       {expandedMemberId === m.member_id && (
-                        <div className="px-3 pb-3">
+                        <div className="px-3 pb-3 space-y-3">
                           {memberPaymentsLoadingId === m.member_id ? (
                             <div className="rounded-md border border-zinc-700 bg-zinc-900 p-3 text-sm text-zinc-400 flex items-center gap-2">
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1913,7 +1980,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
                   onChange={(e) => setRecordForm((f) => ({ ...f, mark_paid_in_full: e.target.checked }))}
                   className="rounded border-zinc-600 bg-zinc-800"
                 />
-                <Label htmlFor="mark-paid-full" className="text-zinc-300 cursor-pointer">Mark as Paid in Full</Label>
+                <Label htmlFor="mark-paid-full" className="text-zinc-300 cursor-pointer">Waive remaining balance for this member</Label>
               </div>
               <div className="flex gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setShowRecordModal(false)} className="flex-1 bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700">Cancel</Button>

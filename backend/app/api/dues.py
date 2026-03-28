@@ -460,6 +460,24 @@ def get_member_status(
             user_name = ud.get("name") or ud.get("email") or "Unknown"
             user_email = ud.get("email") or ""
             user_avatar = ud.get("avatar")
+        per_plan = []
+        for pdoc in plan_docs:
+            pd = pdoc.to_dict()
+            pid = pdoc.id
+            cap_raw = plan_total(pdoc)
+            cap = float(cap_raw) if cap_raw is not None else 0.0
+            paid_to_plan = sum(
+                float((x.to_dict() or {}).get("amount", 0) or 0)
+                for x in member_payments
+                if (x.to_dict() or {}).get("plan_id") == pid
+            )
+            per_plan.append({
+                "plan_id": pid,
+                "plan_name": (pd.get("name") or "Plan").strip(),
+                "total": round(cap, 2),
+                "paid": round(paid_to_plan, 2),
+                "paid_in_full": cap > 0 and paid_to_plan >= cap,
+            })
         out.append({
             "member_id": mid,
             "user_id": uid,
@@ -470,7 +488,9 @@ def get_member_status(
             "title": md.get("title"),
             "total_paid": round(total_paid, 2),
             "paid_in_full": marked_full or (total_required > 0 and total_paid >= total_required),
+            "dues_waived": bool(marked_full),
             "status": status,
+            "plan_balances": per_plan,
         })
     return out
 
