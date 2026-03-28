@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.db.firebase import get_firestore
 from app.core.security import get_current_user_id, get_current_user, generate_uuid
+from app.core.images import normalize_image_value
 
 router = APIRouter()
 
@@ -98,7 +99,14 @@ def create_org_document(
         "id": doc_id,
         "organization_id": org_id,
         "title": req.title.strip(),
-        "content": req.content,
+        "content": normalize_image_value(
+            req.content,
+            field_label="Document image",
+            strict_data_url=False,
+            max_data_url_length=720_000,
+            max_dimension=1400,
+            jpeg_quality=74,
+        ),
         "file_type": req.file_type,
         "folder_name": (req.folder_name or "").strip() or None,
         "is_pinned": False,
@@ -532,7 +540,14 @@ def upload_for_template(
         "template_id": template_id,
         "user_id": user_id,
         "title": req.title or "Upload",
-        "file_url": req.file_url,
+        "file_url": normalize_image_value(
+            req.file_url,
+            field_label="Document image",
+            strict_data_url=False,
+            max_data_url_length=720_000,
+            max_dimension=1400,
+            jpeg_quality=74,
+        ),
         "created_at": now,
     })
     return {"id": doc_id, "ok": True}

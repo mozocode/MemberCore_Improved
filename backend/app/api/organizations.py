@@ -1,12 +1,15 @@
 from typing import Optional
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, Field
 
 from app.db.firebase import get_firestore
 from app.core.security import get_current_user_id, get_current_user, generate_uuid, generate_invite_code
+from app.core.images import normalize_image_value
 import re
 
 router = APIRouter()
+TRIAL_DAYS = 30
 
 
 class CreateOrgRequest(BaseModel):
@@ -17,6 +20,70 @@ class CreateOrgRequest(BaseModel):
     cultural_identity: Optional[str] = None
     description: Optional[str] = None
     location: Optional[str] = None
+
+
+def _to_utc_datetime(val) -> Optional[datetime]:
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+    if isinstance(val, str):
+        try:
+            dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    if isinstance(val, dict) and "_seconds" in val:
+        try:
+            return datetime.fromtimestamp(float(val["_seconds"]), tz=timezone.utc)
+        except Exception:
+            return None
+    return None
+
+
+def _normalize_org_billing_fields(org: dict) -> dict:
+    """
+    Backfill missing trial/billing fields for org docs.
+    This keeps billing eligibility strictly per organization.
+    """
+    updates = {}
+    now = datetime.now(timezone.utc)
+    is_platform_exempt = bool(org.get("platform_admin_owned") or org.get("billing_exempt"))
+    is_pro = bool(org.get("is_pro"))
+
+    if is_platform_exempt:
+        if org.get("billing_status") != "exempt":
+            updates["billing_status"] = "exempt"
+        if not org.get("billing_exempt"):
+            updates["billing_exempt"] = True
+        return updates
+
+    trial_start = _to_utc_datetime(org.get("trial_start_date"))
+    if trial_start is None:
+        trial_start = _to_utc_datetime(org.get("created_at"))
+        if trial_start is not None:
+            updates["trial_start_date"] = trial_start
+
+    trial_end = _to_utc_datetime(org.get("trial_end_date"))
+    if trial_end is None and trial_start is not None:
+        trial_end = trial_start + timedelta(days=TRIAL_DAYS)
+        updates["trial_end_date"] = trial_end
+
+    status_raw = org.get("billing_status")
+    status = str(status_raw or "").strip().lower()
+    has_stripe_history = bool(org.get("stripe_subscription_id") or org.get("stripe_customer_id"))
+
+    if is_pro and not status:
+        updates["billing_status"] = "active"
+        return updates
+
+    if trial_end is not None and trial_end > now:
+        if not status or (status == "inactive" and not has_stripe_history):
+            updates["billing_status"] = "trial"
+    elif not status:
+        updates["billing_status"] = "inactive"
+
+    return updates
 
 
 def _slugify(name: str) -> str:
@@ -57,9 +124,36 @@ def list_organizations(user_id: str = Depends(get_current_user_id)):
         d = doc.to_dict()
         if d.get("is_deleted"):
             continue
+        updates = _normalize_org_billing_fields(d)
+        if updates:
+            db.collection("organizations").document(doc.id).update(updates)
+            d.update(updates)
         d["id"] = doc.id
         d["membership_status"] = md.get("status", "approved")
         orgs.append(d)
+
+    # Backward-compatibility path:
+    # some legacy orgs may have owner_id set without a matching members record.
+    owned_refs = list(
+        db.collection("organizations")
+        .where("owner_id", "==", user_id)
+        .where("is_deleted", "==", False)
+        .get()
+    )
+    for doc in owned_refs:
+        if doc.id in seen_oids:
+            continue
+        d = doc.to_dict()
+        updates = _normalize_org_billing_fields(d)
+        if updates:
+            db.collection("organizations").document(doc.id).update(updates)
+            d.update(updates)
+        d["id"] = doc.id
+        d["membership_status"] = "approved"
+        orgs.append(d)
+        seen_oids.add(doc.id)
+
+    orgs.sort(key=lambda o: (o.get("name") or "").lower())
     return orgs
 
 
@@ -70,9 +164,10 @@ def create_organization(req: CreateOrgRequest, user: dict = Depends(get_current_
     base_slug = _slugify(req.name)
     public_slug = _ensure_unique_slug(db, base_slug or "org")
 
-    from datetime import datetime
     now = datetime.utcnow()
 
+    is_platform_admin = bool(user.get("is_platform_admin", False))
+    trial_end = now + timedelta(days=TRIAL_DAYS)
     org_data = {
         "id": org_id,
         "name": req.name.strip(),
@@ -88,14 +183,17 @@ def create_organization(req: CreateOrgRequest, user: dict = Depends(get_current_
         "dues_label": "Dues",
         "icon_color": "#3f3f46",
         "menu_hidden_pages": [],
-        "is_pro": user.get("is_platform_admin", False),
+        "is_pro": is_platform_admin,
         "trial_start_date": now,
+        "trial_end_date": trial_end,
+        "billing_status": "exempt" if is_platform_admin else "trial",
         "is_verified": False,
         "is_suspended": False,
         "is_deleted": False,
         "owner_id": user["id"],
         "created_at": now,
-        "platform_admin_owned": user.get("is_platform_admin", False),
+        "platform_admin_owned": is_platform_admin,
+        "billing_exempt": is_platform_admin,
     }
 
     db.collection("organizations").document(org_id).set(org_data)
@@ -360,6 +458,10 @@ def get_organization(org_id: str, user_id: str = Depends(get_current_user_id)):
     d = doc.to_dict()
     if d.get("is_deleted"):
         raise HTTPException(status_code=404, detail="Organization not found")
+    updates = _normalize_org_billing_fields(d)
+    if updates:
+        db.collection("organizations").document(doc.id).update(updates)
+        d.update(updates)
     d["id"] = doc.id
     return d
 
@@ -392,9 +494,14 @@ def update_organization(org_id: str, req: UpdateOrgRequest, user_id: str = Depen
             raise HTTPException(status_code=400, detail="Location must be at most 200 characters")
         updates["location"] = loc
     if req.logo is not None:
-        if req.logo and len(req.logo.encode("utf-8")) > 500_000:
-            raise HTTPException(status_code=400, detail="Logo image too large. Use a smaller image (under 400 KB).")
-        updates["logo"] = (req.logo or "").strip() or None
+        updates["logo"] = normalize_image_value(
+            req.logo,
+            field_label="Logo image",
+            strict_data_url=False,
+            max_data_url_length=420_000,
+            max_dimension=1100,
+            jpeg_quality=72,
+        )
     if req.icon_color is not None:
         color = (req.icon_color or "").strip() or "#3f3f46"
         if color and not re.match(r"^#[0-9A-Fa-f]{6}$", color):

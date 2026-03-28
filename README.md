@@ -70,9 +70,21 @@ The app runs at http://localhost:3000. The API is at http://localhost:8001.
 - `JWT_SECRET` – Secret for JWT signing
 - `SUPER_ADMIN_EMAIL` – Email that receives platform admin access
 - `GOOGLE_APPLICATION_CREDENTIALS` – Path to Firebase service account JSON
+- `GOOGLE_CLIENT_IDS` – Comma-separated allowed Google OAuth client IDs (web/iOS/android)
+- `GOOGLE_OAUTH_CLIENT_ID` – Google OAuth web client ID (required for calendar auto-sync connect flow)
+- `GOOGLE_OAUTH_CLIENT_SECRET` – Google OAuth web client secret (required for refresh token exchange)
+- `GOOGLE_CALENDAR_OAUTH_REDIRECT_URI` – Backend callback URL for Google calendar auto-sync
+- `GOOGLE_CALENDAR_SYNC_SECRET` – Shared secret for Cloud Scheduler daily sync endpoint
 
 **Frontend** (`apps/web/.env`):
 - `VITE_BACKEND_URL` – API base URL (default: `/api`; Vite proxy forwards to backend)
+- `VITE_GOOGLE_WEB_CLIENT_ID` – Google OAuth web client ID for Google sign-in
+
+**Mobile** (Expo env / EAS secrets):
+- `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` – Google OAuth web client ID
+- `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` – Google OAuth iOS client ID
+- `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID` – Google OAuth Android client ID
+- `EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID` – Optional Expo Go client ID
 
 ## Testing
 
@@ -102,12 +114,13 @@ npm run build
 
 ## Features
 
-- Authentication (signup, signin, JWT)
+- Authentication (signup, signin, Google OAuth, JWT)
 - Organization creation and listing
 - Role-based access (Owner, Admin, Member, Restricted)
 - Member management with approval workflow
 - Real-time chat (WebSockets)
-- Events & calendar with RSVP
+- Server now auto-compresses uploaded images before DB storage.
+- Events & calendar with RSVP + Google Calendar import/auto-sync
 - Polls
 - Dues & treasury
 - Documents

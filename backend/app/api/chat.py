@@ -1,6 +1,10 @@
 """Chat API - channels, messages, WebSocket."""
 from datetime import datetime, timezone
 from typing import Optional, List
+import ipaddress
+import re
+import urllib.parse
+import urllib.request
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -8,8 +12,106 @@ from google.cloud import firestore
 
 from app.db.firebase import get_firestore
 from app.core.security import get_current_user_id, get_current_user, generate_uuid, decode_token
+from app.core.images import normalize_image_value
 
 router = APIRouter()
+
+MAX_CHAT_IMAGE_DATA_URL_LENGTH = 700_000
+MAX_LINK_PREVIEW_HTML_BYTES = 350_000
+_URL_RE = re.compile(r"(https?://[^\s<>()\"']+)")
+_META_TAG_RE = re.compile(r"<meta[^>]+>", re.IGNORECASE)
+_ATTR_RE = re.compile(r"([a-zA-Z_:.-]+)\s*=\s*([\"'])(.*?)\2")
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
+def _extract_first_url(content: str) -> Optional[str]:
+    m = _URL_RE.search(content or "")
+    if not m:
+        return None
+    return m.group(1).strip()
+
+
+def _is_public_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = (parsed.hostname or "").strip().lower()
+        if not host or host in ("localhost",):
+            return False
+        try:
+            ip = ipaddress.ip_address(host)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def _pick_meta(html: str, names: List[str]) -> Optional[str]:
+    wanted = {n.lower() for n in names}
+    for tag in _META_TAG_RE.findall(html):
+        attrs = {}
+        for k, _, v in _ATTR_RE.findall(tag):
+            attrs[k.lower()] = v.strip()
+        key = (attrs.get("property") or attrs.get("name") or "").lower()
+        if key in wanted:
+            value = attrs.get("content") or ""
+            if value:
+                return value
+    return None
+
+
+def _build_link_preview(content: str) -> Optional[dict]:
+    url = _extract_first_url(content)
+    if not url or not _is_public_url(url):
+        return None
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "MemberCoreBot/1.0 (+https://membercore.io)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            if "text/html" not in ctype and "application/xhtml+xml" not in ctype:
+                return {"url": url}
+            html = resp.read(MAX_LINK_PREVIEW_HTML_BYTES).decode("utf-8", errors="ignore")
+        og_title = _pick_meta(html, ["og:title", "twitter:title"])
+        og_desc = _pick_meta(html, ["og:description", "twitter:description", "description"])
+        og_image = _pick_meta(html, ["og:image", "twitter:image"])
+        og_site = _pick_meta(html, ["og:site_name"])
+        if not og_title:
+            tm = _TITLE_RE.search(html)
+            if tm:
+                og_title = re.sub(r"\s+", " ", tm.group(1)).strip()
+        preview = {"url": url}
+        if og_title:
+            preview["title"] = og_title[:180]
+        if og_desc:
+            preview["description"] = og_desc[:300]
+        if og_image:
+            preview["image"] = urllib.parse.urljoin(url, og_image)
+        if og_site:
+            preview["site_name"] = og_site[:120]
+        return preview
+    except Exception:
+        return {"url": url}
+
+
+def _normalize_image_data_url(raw: Optional[str]) -> Optional[str]:
+    return normalize_image_value(
+        raw,
+        field_label="Image attachment",
+        strict_data_url=True,
+        max_data_url_length=MAX_CHAT_IMAGE_DATA_URL_LENGTH,
+        max_dimension=1280,
+        jpeg_quality=72,
+    )
 
 
 def _require_org_member(db, org_id: str, user_id: str):
@@ -472,6 +574,9 @@ def list_messages(
         created = m.get("created_at")
         if hasattr(created, "isoformat"):
             m["created_at"] = created.isoformat()
+        edited = m.get("edited_at")
+        if hasattr(edited, "isoformat"):
+            m["edited_at"] = edited.isoformat()
         if not m.get("sender_avatar") and m.get("sender_id"):
             sender_ids_missing_avatar.add(m["sender_id"])
         messages.append(m)
@@ -576,10 +681,15 @@ def put_channel_read(
 
 class SendMessageRequest(BaseModel):
     content: str = ""
+    image_data_url: Optional[str] = None
     event_data: Optional[dict] = None
     poll_data: Optional[dict] = None
     reply_to_message_id: Optional[str] = None
     reply_to_snippet: Optional[str] = None
+
+
+class EditMessageRequest(BaseModel):
+    content: str
 
 
 @router.post("/{org_id}/channels/{channel_id}/messages")
@@ -614,7 +724,8 @@ def send_message(
         raise HTTPException(status_code=403, detail="Access denied")
 
     content = (req.content or "").strip()
-    if not content and not req.event_data and not req.poll_data:
+    image_data_url = _normalize_image_data_url(req.image_data_url)
+    if not content and not image_data_url and not req.event_data and not req.poll_data:
         raise HTTPException(status_code=400, detail="Message content required")
 
     msg_type = "text"
@@ -622,6 +733,7 @@ def send_message(
         msg_type = "event"
     elif req.poll_data:
         msg_type = "poll"
+    link_preview = _build_link_preview(content) if msg_type == "text" and content else None
 
     msg_id = generate_uuid()
     now = datetime.now(timezone.utc)
@@ -634,6 +746,8 @@ def send_message(
         "sender_nickname": member_dict.get("nickname"),
         "sender_avatar": user.get("avatar"),
         "content": content,
+        "image_data_url": image_data_url,
+        "link_preview": link_preview,
         "type": msg_type,
         "event_data": req.event_data,
         "poll_data": req.poll_data,
@@ -651,6 +765,8 @@ def send_message(
         "sender_nickname": member_dict.get("nickname"),
         "sender_avatar": user.get("avatar"),
         "content": content,
+        "image_data_url": image_data_url,
+        "link_preview": link_preview,
         "type": msg_type,
         "created_at": now.isoformat(),
     }
@@ -658,6 +774,48 @@ def send_message(
         out["reply_to_message_id"] = req.reply_to_message_id
         out["reply_to_snippet"] = msg_doc.get("reply_to_snippet")
     return out
+
+
+@router.patch("/{org_id}/channels/{channel_id}/messages/{message_id}")
+def edit_message(
+    org_id: str,
+    channel_id: str,
+    message_id: str,
+    req: EditMessageRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Edit a text message in channel chat."""
+    db = get_firestore()
+    _require_org_member(db, org_id, user_id)
+
+    msg_ref = db.collection("messages").document(message_id)
+    msg_doc = msg_ref.get()
+    if not msg_doc.exists:
+        raise HTTPException(status_code=404, detail="Message not found")
+    msg = msg_doc.to_dict() or {}
+    if msg.get("organization_id") != org_id or msg.get("channel_id") != channel_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.get("sender_id") != user_id:
+        raise HTTPException(status_code=403, detail="You can only edit your own messages")
+    if msg.get("type") != "text":
+        raise HTTPException(status_code=400, detail="Only text messages can be edited")
+
+    content = (req.content or "").strip()
+    if not content and not msg.get("image_data_url"):
+        raise HTTPException(status_code=400, detail="Message content required")
+
+    now = datetime.now(timezone.utc)
+    msg_ref.update({
+        "content": content,
+        "link_preview": _build_link_preview(content) if content else None,
+        "edited_at": now,
+    })
+    return {
+        "ok": True,
+        "id": message_id,
+        "content": content,
+        "edited_at": now.isoformat(),
+    }
 
 
 class ToggleReactionRequest(BaseModel):
@@ -991,7 +1149,8 @@ async def chat_websocket(
 
             if msg_type == "message":
                 content = (data.get("content") or "").strip()
-                if not content and not data.get("event_data") and not data.get("poll_data"):
+                image_data_url = _normalize_image_data_url(data.get("image_data_url"))
+                if not content and not image_data_url and not data.get("event_data") and not data.get("poll_data"):
                     continue
 
                 msg_id = generate_uuid()
@@ -1001,6 +1160,7 @@ async def chat_websocket(
                     msg_type_val = "event"
                 elif data.get("poll_data"):
                     msg_type_val = "poll"
+                link_preview = _build_link_preview(content) if msg_type_val == "text" and content else None
 
                 msg_doc = {
                     "id": msg_id,
@@ -1011,6 +1171,8 @@ async def chat_websocket(
                     "sender_nickname": member.get("nickname"),
                     "sender_avatar": user.get("avatar"),
                     "content": content,
+                    "image_data_url": image_data_url,
+                    "link_preview": link_preview,
                     "type": msg_type_val,
                     "event_data": data.get("event_data"),
                     "poll_data": data.get("poll_data"),
