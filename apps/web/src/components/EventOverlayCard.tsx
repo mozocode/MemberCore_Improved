@@ -1,4 +1,5 @@
 import { Calendar, MapPin, X, DollarSign } from 'lucide-react'
+import { normalizeOrgTypeLabel } from '@/lib/orgTypeDisplay'
 import { cn } from '@/lib/utils'
 
 interface EventOrg {
@@ -95,7 +96,7 @@ export function EventOverlayCard({ event, onClose, onView }: EventOverlayCardPro
               <p className="text-sm text-zinc-400">
                 {event.organization.name}
                 {event.organization.type && (
-                  <span className="text-zinc-500"> · {event.organization.type}</span>
+                  <span className="text-zinc-500"> · {normalizeOrgTypeLabel(event.organization.type)}</span>
                 )}
               </p>
             </div>

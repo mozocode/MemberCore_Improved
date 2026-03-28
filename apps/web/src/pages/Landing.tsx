@@ -55,11 +55,12 @@ export function Landing() {
     <div className="min-h-screen bg-black text-white">
       {/* Header */}
       <nav className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/50 sticky top-0 bg-black/80 backdrop-blur z-50">
-        <Link to="/" className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded bg-brand-orange flex items-center justify-center">
-            <span className="text-white font-bold text-sm">M</span>
-          </div>
-          <span className="text-xl font-bold">MemberCore</span>
+        <Link to="/" className="flex items-center">
+          <img
+            src="/membercore-logo-colored.png"
+            alt="MemberCore"
+            className="h-9 w-auto sm:h-10"
+          />
         </Link>
         <div className="hidden md:flex items-center gap-8">
           <a href="#features" className="text-zinc-400 hover:text-white transition-colors">

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'rea
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { Link } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import {
   MessageSquare,
   Loader2,
@@ -18,6 +19,8 @@ import {
   Pin,
   Reply,
   Copy,
+  Paperclip,
+  Pencil,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { api } from '@/lib/api'
@@ -26,6 +29,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ChannelSettingsModal } from '@/components/ChannelSettingsModal'
 import { cn } from '@/lib/utils'
+import { compressImageFile } from '@/lib/imageCompression'
 
 interface Channel {
   id: string
@@ -48,8 +52,17 @@ interface Message {
   sender_nickname?: string | null
   sender_avatar?: string | null
   content: string
+  image_data_url?: string | null
+  link_preview?: {
+    url: string
+    title?: string
+    description?: string
+    image?: string
+    site_name?: string
+  } | null
   type: 'text' | 'event' | 'poll'
   created_at: string
+  edited_at?: string | null
   reply_to_message_id?: string | null
   reply_to_snippet?: string | null
   reactions?: { emoji: string; count: number; reactedByMe: boolean }[]
@@ -86,6 +99,7 @@ function getWsUrl(orgId: string): string {
 
 export function OrgChat() {
   const { orgId } = useParams<{ orgId: string }>()
+  const location = useLocation()
   const { user } = useAuth()
   const [channels, setChannels] = useState<Channel[]>([])
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null)
@@ -93,7 +107,10 @@ export function OrgChat() {
   const [loadingChannels, setLoadingChannels] = useState(true)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [input, setInput] = useState('')
+  const [selectedImageDataUrl, setSelectedImageDataUrl] = useState<string | null>(null)
+  const [selectedImageName, setSelectedImageName] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null)
   const [createModal, setCreateModal] = useState(false)
   const [newChannelName, setNewChannelName] = useState('')
   const [newChannelVisibility, setNewChannelVisibility] = useState<'public' | 'restricted'>('public')
@@ -111,8 +128,10 @@ export function OrgChat() {
   const longPressOpenedThisTouchRef = useRef(false)
   const suppressClickAfterLongPressRef = useRef(false)
   const wsRef = useRef<WebSocket | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesScrollRef = useRef<HTMLDivElement>(null)
+  const messagesThreadRef = useRef<HTMLDivElement>(null)
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeChannelIdRef = useRef<string | null>(null)
   const isNearBottomRef = useRef(true)
@@ -124,13 +143,58 @@ export function OrgChat() {
   const [swipeRevealMessageId, setSwipeRevealMessageId] = useState<string | null>(null)
   const [lastReadMessageId, setLastReadMessageId] = useState<string | null>(null)
   const [lastReadTimestamp, setLastReadTimestamp] = useState<string | null>(null)
-  const hasScrolledToFirstUnreadRef = useRef(false)
+  const forceScrollToLatestRef = useRef(false)
+  const forceInitialLatestOnLoadRef = useRef(true)
+  /**
+   * Primary control for chat anchoring: when true we keep the viewport pinned to the latest message
+   * (initial open, after send, layout/image growth, new inbound messages). Set false when the user
+   * scrolls away from the bottom; set true again when they scroll back within the near-bottom threshold.
+   */
+  const stickToBottomRef = useRef(true)
+  /** After first programmatic scroll-to-bottom for this channel; avoids clearing stickToBottom on pre-scroll layout. */
+  const scrollAnchorAppliedRef = useRef(false)
   const putReadThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const putReadRef = useRef<(messageId: string, timestamp?: string) => void>(() => {})
+  const forceBottomTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryBullets, setSummaryBullets] = useState<string[]>([])
   const [summaryLoading, setSummaryLoading] = useState(false)
   const summaryCacheRef = useRef<{ channelId: string; lastReadId: string | null; bullets: string[] } | null>(null)
+  const forceScrollToBottom = useCallback(() => {
+    if (!stickToBottomRef.current) return
+    const scroller = messagesScrollRef.current
+    if (scroller) {
+      scroller.scrollTop = scroller.scrollHeight
+      isNearBottomRef.current = true
+      scrollAnchorAppliedRef.current = true
+      return
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+    isNearBottomRef.current = true
+    scrollAnchorAppliedRef.current = true
+  }, [])
+
+  const scheduleForceScrollToBottomBurst = useCallback(() => {
+    forceBottomTimersRef.current.forEach((t) => clearTimeout(t))
+    forceBottomTimersRef.current = []
+    // Re-apply bottom anchoring for late content expansion (images/cards). Respect stickToBottomRef throughout.
+    const delays = [0, 50, 120, 320, 700, 1200, 1700, 2400, 3200]
+    delays.forEach((ms) => {
+      const timer = setTimeout(() => {
+        if (!stickToBottomRef.current) return
+        forceScrollToBottom()
+      }, ms)
+      forceBottomTimersRef.current.push(timer)
+    })
+  }, [forceScrollToBottom])
+
+  useEffect(() => {
+    return () => {
+      forceBottomTimersRef.current.forEach((t) => clearTimeout(t))
+      forceBottomTimersRef.current = []
+    }
+  }, [])
+
 
   const token = localStorage.getItem('token')
 
@@ -274,10 +338,22 @@ export function OrgChat() {
 
   useEffect(() => {
     setPinnedBarDismissed(false)
-    hasScrolledToFirstUnreadRef.current = false
+    forceInitialLatestOnLoadRef.current = true
+    stickToBottomRef.current = true
+    scrollAnchorAppliedRef.current = false
+    prevMessageCountRef.current = 0
     summaryCacheRef.current = null
     setSummaryOpen(false)
   }, [activeChannel?.id])
+
+  useEffect(() => {
+    const navState = location.state as { forceLatestChatAt?: number } | null
+    if (!navState?.forceLatestChatAt) return
+    // When Chat is clicked from sidebar, always land on newest message.
+    forceScrollToLatestRef.current = true
+    stickToBottomRef.current = true
+    setNewMessagesBelow(false)
+  }, [location.state])
 
   useEffect(() => {
     if (!swipeRevealMessageId) return
@@ -290,21 +366,54 @@ export function OrgChat() {
     if (!el) return
     const check = () => {
       const { scrollHeight, scrollTop, clientHeight } = el
-      isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 120
+      const near = scrollHeight - scrollTop - clientHeight < 120
+      isNearBottomRef.current = near
+      if (near) {
+        stickToBottomRef.current = true
+      } else if (scrollAnchorAppliedRef.current) {
+        stickToBottomRef.current = false
+      }
     }
     el.addEventListener('scroll', check, { passive: true })
     check()
     return () => el.removeEventListener('scroll', check)
   }, [activeChannel?.id])
 
+  // Re-anchor when thread height changes (images, event cards, link previews). Observing the scroll box
+  // misses scrollHeight growth; observing the thread subtree catches layout shifts.
   useEffect(() => {
-    if (!firstUnreadMessageId || hasScrolledToFirstUnreadRef.current || loadingMessages) return
-    hasScrolledToFirstUnreadRef.current = true
-    const el = document.getElementById(`msg-${firstUnreadMessageId}`)
-    if (el) {
-      setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100)
+    const thread = messagesThreadRef.current
+    if (!thread || loadingMessages) return
+    let t: ReturnType<typeof setTimeout> | null = null
+    const run = () => {
+      if (!stickToBottomRef.current) return
+      forceScrollToBottom()
     }
-  }, [firstUnreadMessageId, loadingMessages])
+    const ro = new ResizeObserver(() => {
+      if (!stickToBottomRef.current) return
+      if (t) clearTimeout(t)
+      t = setTimeout(run, 32)
+    })
+    ro.observe(thread)
+    return () => {
+      ro.disconnect()
+      if (t) clearTimeout(t)
+    }
+  }, [activeChannel?.id, loadingMessages, messages.length, forceScrollToBottom])
+
+  useEffect(() => {
+    if (loadingMessages) return
+    if (!forceScrollToLatestRef.current && !forceInitialLatestOnLoadRef.current) return
+    forceScrollToLatestRef.current = false
+    forceInitialLatestOnLoadRef.current = false
+    stickToBottomRef.current = true
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        forceScrollToBottom()
+        scheduleForceScrollToBottomBurst()
+      })
+    })
+  }, [loadingMessages, messages.length, activeChannel?.id, forceScrollToBottom, scheduleForceScrollToBottomBurst])
 
   useEffect(() => {
     const el = messagesScrollRef.current
@@ -339,13 +448,16 @@ export function OrgChat() {
   }, [activeChannel?.id, orgId, putRead])
 
   useEffect(() => {
-    const wasNearBottom = isNearBottomRef.current
     const count = messages.length
     const prevCount = prevMessageCountRef.current
     prevMessageCountRef.current = count
     if (count > prevCount && prevCount > 0) {
-      if (wasNearBottom) {
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+      if (stickToBottomRef.current) {
+        setNewMessagesBelow(false)
+        setTimeout(() => {
+          if (!stickToBottomRef.current) return
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+        }, 50)
       } else {
         setNewMessagesBelow(true)
       }
@@ -377,7 +489,7 @@ export function OrgChat() {
               if (prev.some((x) => x.id === m.id)) return prev
               return [...prev, m]
             })
-            if (isNearBottomRef.current && m.id) {
+            if (stickToBottomRef.current && m.id) {
               putReadRef.current(m.id, m.created_at)
             }
           }
@@ -407,16 +519,36 @@ export function OrgChat() {
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     const text = input.trim()
-    if (!text || !activeChannel || !orgId || sending) return
+    if ((!text && !selectedImageDataUrl) || !activeChannel || !orgId || sending) return
     setSending(true)
+    if (editingMessage && activeChannel && orgId) {
+      try {
+        const res = await api.patch(`/chat/${orgId}/channels/${activeChannel.id}/messages/${editingMessage.id}`, {
+          content: text,
+        })
+        const editedAt = res.data?.edited_at || new Date().toISOString()
+        setMessages((prev) =>
+          prev.map((m) => (m.id === editingMessage.id ? { ...m, content: text, edited_at: editedAt } : m)),
+        )
+        setInput('')
+        setEditingMessage(null)
+      } catch {
+        // ignore edit failures for now
+      } finally {
+        setSending(false)
+      }
+      return
+    }
+    const replySnippet = replyingTo ? ((replyingTo.content || '').slice(0, 200) || (replyingTo.image_data_url ? '[Image]' : '')) : ''
     const replyPayload =
       replyingTo ?
         {
           reply_to_message_id: replyingTo.id,
-          reply_to_snippet: (replyingTo.content || '').slice(0, 200),
+          reply_to_snippet: replySnippet,
         }
       : {}
     try {
+      stickToBottomRef.current = true
       const ws = wsRef.current
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(
@@ -424,19 +556,25 @@ export function OrgChat() {
             type: 'message',
             channel_id: activeChannel.id,
             content: text,
+            image_data_url: selectedImageDataUrl,
             ...replyPayload,
           }),
         )
         setInput('')
+        setSelectedImageDataUrl(null)
+        setSelectedImageName(null)
         setReplyingTo(null)
       } else {
         const res = await api.post(`/chat/${orgId}/channels/${activeChannel.id}/messages`, {
           content: text,
+          image_data_url: selectedImageDataUrl,
           ...replyPayload,
         })
         if (res.data?.id) {
           setMessages((prev) => [...prev, { ...res.data, sender_name: res.data.sender_name || 'Unknown' }])
           setInput('')
+          setSelectedImageDataUrl(null)
+          setSelectedImageName(null)
           setReplyingTo(null)
         }
       }
@@ -444,6 +582,19 @@ export function OrgChat() {
       setSending(false)
     } finally {
       setSending(false)
+    }
+  }
+
+  const handlePickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const compressed = await compressImageFile(file, { maxSize: 1600, maxBytes: 600_000 })
+      setSelectedImageDataUrl(compressed)
+      setSelectedImageName(file.name)
+    } catch {
+      // Ignore bad file reads; user can try another image.
     }
   }
 
@@ -738,10 +889,11 @@ export function OrgChat() {
           <>
             <div
               ref={messagesScrollRef}
-              className="flex-1 overflow-y-auto overflow-x-hidden p-4 min-h-0 relative"
+              className="flex-1 overflow-y-auto overflow-x-hidden p-4 min-h-0 relative flex flex-col"
               style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' } as React.CSSProperties}
               onContextMenu={(e) => e.preventDefault()}
             >
+              <div className="flex flex-col min-h-full min-h-0 flex-1 w-full">
               {pinnedMessageId && messages.some((m) => m.id === pinnedMessageId) && !pinnedBarDismissed && (
                 <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-zinc-800/80 border border-zinc-700 text-sm text-zinc-300 mb-4">
                   <Pin size={14} className="shrink-0 text-amber-500" />
@@ -765,10 +917,11 @@ export function OrgChat() {
                 </div>
               )}
               {newMessagesBelow && (
-                <div className="sticky top-0 z-10 flex justify-center py-2">
+                <div className="sticky top-0 z-10 flex justify-center py-2 shrink-0">
                   <button
                     type="button"
                     onClick={() => {
+                      stickToBottomRef.current = true
                       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
                       setNewMessagesBelow(false)
                     }}
@@ -779,16 +932,17 @@ export function OrgChat() {
                 </div>
               )}
               {loadingMessages ? (
-                <div className="flex justify-center py-12">
+                <div className="flex flex-1 min-h-[240px] items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
                 </div>
               ) : messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+                <div className="flex flex-1 flex-col items-center justify-center py-12 text-zinc-500 min-h-[240px]">
                   <MessageSquare size={48} className="mb-3 opacity-50" />
                   <p>No messages yet. Start the conversation!</p>
                 </div>
               ) : (
-                groupMessages(messages).map((group) => (
+                <div ref={messagesThreadRef} className="mt-auto w-full flex flex-col min-h-0">
+                {groupMessages(messages).map((group) => (
                   <div key={group[0].id} className={cn('space-y-0.5', group.length > 1 ? 'mb-3' : 'mb-4')}>
                     {group.map((m, idxInGroup) => {
                       const isFirstInGroup = idxInGroup === 0
@@ -1072,7 +1226,45 @@ export function OrgChat() {
                         </div>
                         </>
                       ) : (
-                        <p className="text-zinc-300 text-sm mt-0.5 break-words">{m.content}</p>
+                        <>
+                          {m.image_data_url && (
+                            <img
+                              src={m.image_data_url}
+                              alt="Chat attachment"
+                              className="mt-1 rounded-lg border border-zinc-700 max-h-72 w-auto object-contain"
+                            />
+                          )}
+                          {m.content && <p className="text-zinc-300 text-sm mt-0.5 break-words">{m.content}</p>}
+                          {m.link_preview?.url && (
+                            <a
+                              href={m.link_preview.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 block rounded-xl border border-zinc-700 bg-zinc-900 overflow-hidden max-w-md hover:border-zinc-600 transition-colors"
+                            >
+                              {m.link_preview.image ? (
+                                <img
+                                  src={m.link_preview.image}
+                                  alt={m.link_preview.title || 'Link preview'}
+                                  className="w-full h-36 object-cover bg-zinc-800"
+                                />
+                              ) : null}
+                              <div className="p-3">
+                                {m.link_preview.site_name && (
+                                  <p className="text-[11px] uppercase tracking-wide text-zinc-500">{m.link_preview.site_name}</p>
+                                )}
+                                <p className="text-sm font-semibold text-white mt-1">
+                                  {m.link_preview.title || m.link_preview.url}
+                                </p>
+                                {m.link_preview.description && (
+                                  <p className="text-xs text-zinc-400 mt-1 break-words">{m.link_preview.description}</p>
+                                )}
+                                <p className="text-xs text-zinc-500 mt-2 truncate">{m.link_preview.url}</p>
+                              </div>
+                            </a>
+                          )}
+                          {m.edited_at && <p className="text-[11px] text-zinc-500 mt-1">(edited)</p>}
+                        </>
                       )}
                       </div>
                       {/* ReactionRow: only when reactions exist */}
@@ -1169,32 +1361,106 @@ export function OrgChat() {
                       )
                     })}
                   </div>
-                ))
+                ))}
+                <div ref={messagesEndRef} className="h-0 w-full shrink-0" aria-hidden />
+                </div>
               )}
-              <div ref={messagesEndRef} />
+              </div>
             </div>
 
             {/* Fixed input bar - safe-area so it stays above browser UI on mobile */}
             {replyingTo && (
               <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-zinc-800/80 border-t border-zinc-800 text-sm text-zinc-400">
                 <Reply size={14} className="shrink-0" />
-                <span className="truncate flex-1">Replying to {replyingTo.sender_nickname || replyingTo.sender_name}: {(replyingTo.content || '').slice(0, 50)}…</span>
+                <span className="truncate flex-1">
+                  Replying to {replyingTo.sender_nickname || replyingTo.sender_name}: {((replyingTo.content || '').slice(0, 50) || (replyingTo.image_data_url ? '[Image]' : ''))}…
+                </span>
+                {editingMessage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingMessage(null)
+                      setInput('')
+                    }}
+                    className="ml-2 text-xs text-zinc-500 hover:text-zinc-300"
+                  >
+                    Cancel edit
+                  </button>
+                )}
                 <button type="button" onClick={() => setReplyingTo(null)} className="p-1 hover:text-white">
                   <X size={16} />
                 </button>
               </div>
             )}
+            {editingMessage && (
+              <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-zinc-800/80 border-t border-zinc-800 text-sm text-zinc-400">
+                <Pencil size={14} className="shrink-0" />
+                <span className="truncate flex-1">Editing your message</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingMessage(null)
+                    setInput('')
+                  }}
+                  className="p-1 hover:text-white"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+            {selectedImageDataUrl && (
+              <div className="shrink-0 px-4 py-2 border-t border-zinc-800 bg-zinc-900/70">
+                <div className="relative inline-block">
+                  <img src={selectedImageDataUrl} alt="Selected attachment" className="max-h-32 rounded-lg border border-zinc-700 object-contain" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedImageDataUrl(null)
+                      setSelectedImageName(null)
+                    }}
+                    className="absolute -top-2 -right-2 rounded-full bg-zinc-800 border border-zinc-600 p-1 text-zinc-300 hover:text-white"
+                    aria-label="Remove image"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+                {selectedImageName && <p className="text-xs text-zinc-500 mt-1 truncate">{selectedImageName}</p>}
+              </div>
+            )}
             <form onSubmit={handleSend} className="shrink-0 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-zinc-800 bg-black">
               <div className="flex gap-2">
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePickImage}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0 bg-zinc-900 border-zinc-700 text-zinc-300 hover:bg-zinc-800 min-h-[44px] min-w-[44px]"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={sending}
+                  aria-label="Attach image"
+                >
+                  <Paperclip size={16} />
+                </Button>
                 <Input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={replyingTo ? `Reply to ${replyingTo.sender_nickname || replyingTo.sender_name}...` : `Message #${activeChannel.name}`}
+                  placeholder={
+                    editingMessage
+                      ? 'Edit message...'
+                      : replyingTo
+                        ? `Reply to ${replyingTo.sender_nickname || replyingTo.sender_name}...`
+                        : `Message #${activeChannel.name}`
+                  }
                   disabled={sending}
                   className="flex-1 bg-zinc-900 border-zinc-700 text-white placeholder:text-zinc-500 min-h-[44px]"
                 />
-                <Button type="submit" disabled={sending || !input.trim()} size="icon" className="shrink-0 bg-white text-black hover:bg-zinc-200 min-h-[44px] min-w-[44px]">
-                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send size={18} />}
+                <Button type="submit" disabled={sending || (!input.trim() && !selectedImageDataUrl)} size="icon" className="shrink-0 bg-white text-black hover:bg-zinc-200 min-h-[44px] min-w-[44px]">
+                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : editingMessage ? <Pencil size={18} /> : <Send size={18} />}
                 </Button>
               </div>
             </form>
@@ -1300,6 +1566,22 @@ export function OrgChat() {
                     {pinnedMessageId === longPressState.message.id ? 'Unpin message' : 'Pin message'}
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInput(longPressState.message.content || '')
+                    setEditingMessage(longPressState.message)
+                    setReplyingTo(null)
+                    setSelectedImageDataUrl(null)
+                    setSelectedImageName(null)
+                    closeLongPressPanel()
+                  }}
+                  disabled={longPressState.message.sender_id !== user?.id || longPressState.message.type !== 'text'}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-zinc-200 hover:bg-zinc-800 active:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Pencil size={16} className="text-zinc-400" />
+                  Edit message
+                </button>
                 <button
                   type="button"
                   onClick={() => handleCopy(longPressState.message)}

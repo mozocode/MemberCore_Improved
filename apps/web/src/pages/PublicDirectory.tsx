@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Search, Filter, MapPin, Calendar, List, Loader2, ChevronRight } from 'lucide-react'
-import { DirectoryMap } from '@/components/DirectoryMap'
+import { LazyDirectoryMap } from '@/components/LazyDirectoryMap'
 import type { DirectoryEvent } from '@/components/directory/EventDetailModal'
 import { api } from '@/lib/api'
 import { FilterModal, type DirectoryFilters } from '@/components/FilterModal'
 import { FilterPills } from '@/components/FilterPills'
 import { applyClientSideFilters } from '@/lib/applyDirectoryFilters'
+import { normalizeOrgTypeLabel } from '@/lib/orgTypeDisplay'
 import { cn } from '@/lib/utils'
 
 const emptyFilters: DirectoryFilters = {
@@ -172,7 +173,7 @@ export function PublicDirectory() {
           </div>
         ) : viewMode === 'map' ? (
           <div className="flex-1 min-h-[400px] min-w-0">
-            <DirectoryMap
+            <LazyDirectoryMap
               events={filteredEvents}
               onViewDetails={(event) => navigate(`/events/${event.id}`, { state: { fromPublicDirectory: true } })}
               fullHeight
@@ -225,7 +226,7 @@ export function PublicDirectory() {
                           {event.organization.type && (
                             <span className="text-zinc-500">
                               {' '}
-                              · {event.organization.type}
+                              · {normalizeOrgTypeLabel(event.organization.type)}
                             </span>
                           )}
                         </p>

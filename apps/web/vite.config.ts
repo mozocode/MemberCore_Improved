@@ -29,7 +29,23 @@ export default defineConfig({
         manualChunks: (id) => {
           if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) return 'react-vendor'
           if (id.includes('node_modules/react-router')) return 'router'
-          if (id.includes('mapbox-gl')) return 'mapbox'
+
+          // Keep map stack isolated so non-map routes never download it.
+          if (
+            id.includes('/node_modules/mapbox-gl/') ||
+            id.includes('/node_modules/@mapbox/') ||
+            id.includes('/node_modules/react-map-gl/')
+          ) {
+            return 'mapbox'
+          }
+
+          // QR/check-in libs are heavy and only used in settings flows.
+          if (
+            id.includes('/node_modules/html5-qrcode/') ||
+            id.includes('/node_modules/react-qr-code/')
+          ) {
+            return 'qr-tools'
+          }
         },
       },
     },

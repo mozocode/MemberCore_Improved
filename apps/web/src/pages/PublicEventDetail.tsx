@@ -3,6 +3,7 @@ import { useParams, useLocation, Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Calendar, MapPin, Users, Share2, ExternalLink, Loader2 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { api } from '@/lib/api'
+import { normalizeOrgTypeLabel } from '@/lib/orgTypeDisplay'
 import { PublicRsvpSection } from '@/components/directory/PublicRsvpSection'
 import { PublicTicketSection } from '@/components/directory/PublicTicketSection'
 import type { DirectoryEvent } from '@/components/directory/EventDetailModal'
@@ -215,7 +216,7 @@ export function PublicEventDetail() {
               <div className="min-w-0">
                 <p className="text-white font-medium truncate">{event.organization.name}</p>
                 {event.organization.type && (
-                  <p className="text-sm text-zinc-400">{event.organization.type}</p>
+                  <p className="text-sm text-zinc-400">{normalizeOrgTypeLabel(event.organization.type)}</p>
                 )}
                 <Link
                   to={`/org/${event.organization.id}`}

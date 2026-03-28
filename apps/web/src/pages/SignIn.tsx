@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { GoogleLogin } from '@react-oauth/google'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,7 +12,14 @@ import { Loader2 } from 'lucide-react'
 function safeReturnPath(returnParam: string | null): string | null {
   if (!returnParam || typeof returnParam !== 'string') return null
   const path = decodeURIComponent(returnParam).replace(/^\/+/, '/')
-  if (path.startsWith('/org/') || path.startsWith('/join') || path.startsWith('/invite/')) return path
+  if (
+    path.startsWith('/org/') ||
+    path.startsWith('/join') ||
+    path.startsWith('/invite/') ||
+    path.startsWith('/super-admin')
+  ) {
+    return path
+  }
   return null
 }
 
@@ -22,9 +30,10 @@ export function SignIn() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { signin } = useAuth()
+  const { signin, signinWithGoogle } = useAuth()
   const { success, error: toastError } = useToast()
   const navigate = useNavigate()
+  const googleEnabled = !!import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -70,6 +79,40 @@ export function SignIn() {
           <CardDescription>Enter your credentials to access your account</CardDescription>
         </CardHeader>
         <CardContent>
+          {googleEnabled && (
+            <>
+              <div className="mb-4 flex justify-center">
+                <GoogleLogin
+                  onSuccess={async (credentialResponse) => {
+                    const idToken = credentialResponse.credential
+                    if (!idToken) {
+                      setError('Google sign in failed. Please try again.')
+                      return
+                    }
+                    setError('')
+                    setLoading(true)
+                    try {
+                      await signinWithGoogle(idToken)
+                      success('Welcome back!')
+                      navigate(returnTo || '/user-dashboard')
+                    } catch (err: any) {
+                      const msg = err?.response?.data?.detail || err?.message || 'Google sign in failed'
+                      setError(msg)
+                      toastError(msg)
+                    } finally {
+                      setLoading(false)
+                    }
+                  }}
+                  onError={() => setError('Google sign in failed. Please try again.')}
+                />
+              </div>
+              <div className="mb-4 flex items-center gap-2">
+                <div className="h-px flex-1 bg-zinc-800" />
+                <span className="text-xs uppercase tracking-wide text-zinc-500">or</span>
+                <div className="h-px flex-1 bg-zinc-800" />
+              </div>
+            </>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">

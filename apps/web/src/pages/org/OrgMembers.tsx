@@ -24,20 +24,6 @@ interface Member {
   initial: string
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  owner: 'Owner',
-  admin: 'Admin',
-  member: 'Member',
-  restricted: 'Restricted',
-}
-
-const ROLE_COLORS: Record<string, string> = {
-  owner: 'bg-amber-500/20 text-amber-400',
-  admin: 'bg-purple-500/20 text-purple-400',
-  member: 'bg-green-500/20 text-green-400',
-  restricted: 'bg-zinc-500/20 text-zinc-400',
-}
-
 export function OrgMembers() {
   const { orgId } = useParams<{ orgId: string }>()
   const [loading, setLoading] = useState(true)
@@ -175,18 +161,8 @@ export function OrgMembers() {
                 <p className="font-medium text-white truncate">
                   {getDisplayName(member.name, member.nickname)}
                 </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    'px-2 py-1 rounded text-xs font-medium',
-                    ROLE_COLORS[member.role] ?? 'bg-zinc-500/20 text-zinc-400',
-                  )}
-                >
-                  {ROLE_LABELS[member.role] ?? member.role}
-                </span>
                 {member.title && (
-                  <span className="text-xs text-zinc-500">{member.title}</span>
+                  <p className="text-xs text-zinc-500 truncate">{member.title}</p>
                 )}
               </div>
             </div>

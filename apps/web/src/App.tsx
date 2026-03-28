@@ -9,6 +9,8 @@ import { Loader2 } from 'lucide-react'
 import { Landing } from '@/pages/Landing'
 import { SignIn } from '@/pages/SignIn'
 import { SignUp } from '@/pages/SignUp'
+import { ForgotPassword } from '@/pages/ForgotPassword'
+import { ResetPassword } from '@/pages/ResetPassword'
 
 // Lazy-loaded routes (code-split; load on first visit)
 const UserDashboard = lazy(() => import('@/pages/UserDashboard').then((m) => ({ default: m.UserDashboard })))
@@ -31,6 +33,7 @@ const PublicDirectory = lazy(() => import('@/pages/PublicDirectory').then((m) =>
 const PublicEventDetail = lazy(() => import('@/pages/PublicEventDetail').then((m) => ({ default: m.PublicEventDetail })))
 const PublicMyTicket = lazy(() => import('@/pages/PublicMyTicket').then((m) => ({ default: m.PublicMyTicket })))
 const Privacy = lazy(() => import('@/pages/Privacy').then((m) => ({ default: m.default })))
+const Terms = lazy(() => import('@/pages/Terms').then((m) => ({ default: m.default })))
 const AssociationManagementSoftware = lazy(() => import('@/pages/AssociationManagementSoftware').then((m) => ({ default: m.default })))
 const MotorcycleClubs = lazy(() => import('@/pages/MotorcycleClubs').then((m) => ({ default: m.default })))
 const CompareWildApricot = lazy(() => import('@/pages/CompareWildApricot').then((m) => ({ default: m.default })))
@@ -62,6 +65,7 @@ function ScrollToTop() {
 
 function ProtectedRoute({ children }: { children?: React.ReactNode }) {
   const { user, loading } = useAuth()
+  const location = useLocation()
   if (loading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -69,7 +73,10 @@ function ProtectedRoute({ children }: { children?: React.ReactNode }) {
       </div>
     )
   }
-  if (!user) return <Navigate to="/signin" replace />
+  if (!user) {
+    const returnTo = encodeURIComponent(`${location.pathname}${location.search || ''}`)
+    return <Navigate to={`/signin?return=${returnTo}`} replace />
+  }
   return <>{children}</>
 }
 
@@ -93,6 +100,12 @@ function AppRoutes() {
   }
   if (pathname === '/signin' || pathname === '/signin/') {
     return <SignIn />
+  }
+  if (pathname === '/forgot-password' || pathname === '/forgot-password/') {
+    return <ForgotPassword />
+  }
+  if (pathname === '/reset-password' || pathname === '/reset-password/') {
+    return <ResetPassword />
   }
   // Ensure association page always renders (avoids catch-all redirect from trailing slash or cache)
   if (pathname === '/association-management-software' || pathname === '/association-management-software/') {
@@ -174,6 +187,10 @@ function AppRoutes() {
       <Route path="/" element={<Landing />} />
       <Route path="/signin" element={<SignIn />} />
       <Route path="/signin/" element={<Navigate to="/signin" replace />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/forgot-password/" element={<Navigate to="/forgot-password" replace />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/reset-password/" element={<Navigate to="/reset-password" replace />} />
       <Route path="/signup" element={<SignUp />} />
       <Route path="/signup/" element={<Navigate to="/signup" replace />} />
       <Route
@@ -193,6 +210,8 @@ function AppRoutes() {
         }
       />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/terms/" element={<Navigate to="/terms" replace />} />
       <Route path="/association-management-software" element={<AssociationManagementSoftware />} />
       <Route path="/association-management-software/" element={<Navigate to="/association-management-software" replace />} />
       <Route path="/motorcycle-clubs" element={<MotorcycleClubs />} />

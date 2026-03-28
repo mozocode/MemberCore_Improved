@@ -39,7 +39,7 @@ export const ORG_TYPE_GROUPS = [
     category: 'Civic & Administrative Organizations',
     categoryDisplay: '🏛️ Civic & Administrative Organizations',
     subtitle: 'Governance or advocacy focused',
-    options: ['Neighborhood / HOA', 'Trade Union / Guild', 'Political Organization'],
+    options: ['Neighborhood / HOA', 'Union / Guild', 'Political Organization'],
   },
   {
     category: 'Other',

@@ -34,16 +34,7 @@ export const inviteApi = {
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      const url = error.config?.url || ''
-      if (!url.includes('/auth/signin') && !url.includes('/auth/signup')) {
-        localStorage.removeItem('token')
-        window.location.href = '/signin'
-      }
-    }
-    return Promise.reject(error)
-  }
+  (error) => Promise.reject(error)
 )
 
 // --- Super Admin API (all under /admin, require platform admin) ---
@@ -92,6 +83,8 @@ export const adminApi = {
     Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') q.set(k, String(v)) })
     return admin(`/billing${q.toString() ? `?${q}` : ''}`)
   },
+  grantOrgPro: (orgId: string, months: number) =>
+    admin(`/organizations/${orgId}/billing/grant-pro`, { method: 'POST', body: { months } }),
   getReportsAvailable: () => admin('/reports/available'),
   getFeedback: () => admin('/feedback'),
 }

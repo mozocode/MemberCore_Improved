@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { Fragment, useState, useEffect } from 'react'
 import { AdminLayout } from './AdminLayout'
 import { adminApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { normalizeOrgTypeLabel } from '@/lib/orgTypeDisplay'
+import { getIdentityLabel } from '@/lib/culturalIdentities'
 
 type Org = {
   id: string
@@ -16,6 +18,10 @@ type Org = {
   plan?: string
   activation_score?: number
   member_count?: number
+  admin_count?: number
+  event_count?: number
+  last_activity_at?: string
+  public_slug?: string
   created_at?: string
 }
 
@@ -25,6 +31,21 @@ function formatDate(s?: string) {
     return new Date(s).toLocaleDateString()
   } catch {
     return s
+  }
+}
+
+function formatDateTime(s?: string) {
+  if (!s) return '—'
+  try {
+    return new Date(s).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+  } catch {
+    return String(s)
   }
 }
 
@@ -43,6 +64,8 @@ export default function AdminOrganizations() {
   const [planFilter, setPlanFilter] = useState('All')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  const [proMonthsByOrg, setProMonthsByOrg] = useState<Record<string, string>>({})
+  const [grantingOrgId, setGrantingOrgId] = useState<string | null>(null)
 
   const load = () => {
     adminApi.getOrganizations({
@@ -78,6 +101,28 @@ export default function AdminOrganizations() {
     load()
   }
 
+  const getProMonthsValue = (orgId: string) => proMonthsByOrg[orgId] ?? '1'
+
+  const setProMonthsValue = (orgId: string, value: string) => {
+    setProMonthsByOrg((prev) => ({ ...prev, [orgId]: value }))
+  }
+
+  const handleGrantPro = async (orgId: string) => {
+    const raw = getProMonthsValue(orgId).trim()
+    const months = Number(raw)
+    if (!Number.isInteger(months) || months < 0) {
+      alert('Months must be a whole number >= 0. Use 0 for lifetime free Pro access.')
+      return
+    }
+    setGrantingOrgId(orgId)
+    try {
+      await adminApi.grantOrgPro(orgId, months)
+      load()
+    } finally {
+      setGrantingOrgId(null)
+    }
+  }
+
   return (
     <AdminLayout title="Organizations" subtitle="Full org management">
       <div className="flex flex-wrap items-center gap-4 mb-4">
@@ -111,8 +156,8 @@ export default function AdminOrganizations() {
           </Button>
         )}
       </div>
-      <div className="bg-[#1a1d24] rounded-lg border border-gray-800 overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-[#1a1d24] rounded-lg border border-gray-800 overflow-x-auto">
+        <table className="w-full text-sm min-w-[1100px]">
           <thead>
             <tr className="border-b border-gray-800 text-left text-gray-500">
               <th className="p-3 w-10"><input type="checkbox" checked={orgs.length > 0 && selected.size === orgs.length} onChange={selectAll} /></th>
@@ -120,34 +165,75 @@ export default function AdminOrganizations() {
               <th className="p-3">Owner</th>
               <th className="p-3">Type</th>
               <th className="p-3">Cultural identity</th>
+              <th className="p-3 text-right whitespace-nowrap">Members</th>
+              <th className="p-3 text-right whitespace-nowrap">Events</th>
+              <th className="p-3 text-right whitespace-nowrap">Admins</th>
               <th className="p-3">Verified</th>
               <th className="p-3">Plan</th>
-              <th className="p-3">Created</th>
+              <th className="p-3 whitespace-nowrap">Created</th>
+              <th className="p-3 whitespace-nowrap">Last activity</th>
             </tr>
           </thead>
           <tbody>
             {orgs.map((org) => (
-              <>
-                <tr key={org.id} className={`border-b border-gray-800 ${selected.has(org.id) ? 'bg-blue-900/20' : ''}`}>
+              <Fragment key={org.id}>
+                <tr className={`border-b border-gray-800 ${selected.has(org.id) ? 'bg-blue-900/20' : ''}`}>
                   <td className="p-3"><input type="checkbox" checked={selected.has(org.id)} onChange={() => toggleSelect(org.id)} /></td>
-                  <td className="p-3 text-white">{org.name || '—'}</td>
-                  <td className="p-3 text-gray-400">{org.owner_email || '—'}</td>
-                  <td className="p-3 text-gray-400">{org.type || 'Organization'}</td>
-                  <td className="p-3 text-gray-400">{org.cultural_identity || 'Open / Inclusive'}</td>
+                  <td className="p-3 text-white">
+                    <div className="flex flex-col gap-0.5 min-w-[140px]">
+                      <span className="flex items-center gap-2 flex-wrap">
+                        {org.name || '—'}
+                        {org.is_suspended ? (
+                          <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-yellow-600/80 text-yellow-400">Suspended</span>
+                        ) : null}
+                      </span>
+                      {org.public_slug ? (
+                        <span className="text-xs text-gray-500">/org/{org.public_slug}</span>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="p-3 text-gray-400 max-w-[200px] truncate" title={org.owner_email}>{org.owner_email || '—'}</td>
+                  <td className="p-3 text-gray-400">{normalizeOrgTypeLabel(org.type) || 'Organization'}</td>
+                  <td className="p-3 text-gray-400 max-w-[160px]" title={getIdentityLabel(org.cultural_identity) || undefined}>
+                    {getIdentityLabel(org.cultural_identity) || org.cultural_identity || '—'}
+                  </td>
+                  <td className="p-3 text-right text-gray-200 tabular-nums">{org.member_count ?? 0}</td>
+                  <td className="p-3 text-right text-gray-200 tabular-nums">{org.event_count ?? 0}</td>
+                  <td className="p-3 text-right text-gray-200 tabular-nums">{org.admin_count ?? 0}</td>
                   <td className="p-3">{org.is_verified ? <span className="text-green-400">Verified</span> : <span className="text-gray-500">Unverified</span>}</td>
                   <td className="p-3 text-gray-400">{org.plan ?? (org.is_pro ? 'Pro' : 'Free')}</td>
-                  <td className="p-3 text-gray-500">{formatDate(org.created_at)}</td>
+                  <td className="p-3 text-gray-500 whitespace-nowrap">{formatDate(org.created_at)}</td>
+                  <td className="p-3 text-gray-500 text-xs whitespace-nowrap">{formatDateTime(org.last_activity_at)}</td>
                 </tr>
-                <tr key={`${org.id}-actions`} className="border-b border-gray-800 bg-gray-900/30">
+                <tr className="border-b border-gray-800 bg-gray-900/30">
                   <td className="p-3" />
-                  <td colSpan={7} className="p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="text-gray-500">Activation</span>
-                        <span className={`w-2 h-2 rounded-full ${getScoreColor(org.activation_score ?? 0)}`} />
-                        <span className="text-white">{(org.activation_score ?? 0)}/5</span>
+                  <td colSpan={11} className="p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                        <span className="flex items-center gap-2">
+                          <span>Activation</span>
+                          <span className={`w-2 h-2 rounded-full ${getScoreColor(org.activation_score ?? 0)}`} />
+                          <span className="text-white">{(org.activation_score ?? 0)}/5</span>
+                          <span className="text-gray-600">(logo, description, member milestones)</span>
+                        </span>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Input
+                          value={getProMonthsValue(org.id)}
+                          onChange={(e) => setProMonthsValue(org.id, e.target.value)}
+                          className="w-24 h-8 bg-[#0f1117] border-gray-700 text-white"
+                          placeholder="months"
+                          title="Months of Pro access. Use 0 for lifetime free Pro."
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="border-blue-600 text-blue-300 hover:bg-blue-600/20"
+                          onClick={() => handleGrantPro(org.id)}
+                          disabled={grantingOrgId === org.id}
+                        >
+                          {grantingOrgId === org.id ? 'Granting…' : 'Grant Pro'}
+                        </Button>
                         <Button variant="outline" size="sm" className="border-gray-600" onClick={async () => { await adminApi.verifyOrg(org.id); load() }}>Verify</Button>
                         <Button variant="outline" size="sm" className="border-gray-600" onClick={async () => { await adminApi.unverifyOrg(org.id); load() }}>Unverify</Button>
                         {org.is_suspended ? (
@@ -160,7 +246,7 @@ export default function AdminOrganizations() {
                     </div>
                   </td>
                 </tr>
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>

@@ -40,11 +40,35 @@ export function AdminLayout({
       return
     }
     if (!user) return
+    // Fast path: trust server-provided /auth/me admin flag to avoid blocking UI
+    // on a second network call every time this layout mounts.
+    if (user.is_platform_admin) {
+      setIsAdmin(true)
+      setLoading(false)
+      // Keep an async server verification in the background so revoked access
+      // still redirects without making the initial render feel stuck.
+      adminApi.verifyAccess().catch(() => navigate('/user-dashboard'))
+      return
+    }
+
+    let done = false
+    const finish = (fn: () => void) => {
+      if (done) return
+      done = true
+      fn()
+    }
+    const timeout = window.setTimeout(() => {
+      finish(() => navigate('/user-dashboard'))
+    }, 12000)
+
     adminApi
       .verifyAccess()
-      .then(() => setIsAdmin(true))
-      .catch(() => navigate('/user-dashboard'))
-      .finally(() => setLoading(false))
+      .then(() => finish(() => {
+        setIsAdmin(true)
+        setLoading(false)
+      }))
+      .catch(() => finish(() => navigate('/user-dashboard')))
+      .finally(() => window.clearTimeout(timeout))
   }, [user, authLoading, navigate])
 
   if (authLoading || loading) {

@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { Search, Filter, MapPin, Calendar, Loader2, ChevronRight } from 'lucide-react'
-import { DirectoryMap } from '@/components/DirectoryMap'
+import { LazyDirectoryMap } from '@/components/LazyDirectoryMap'
 import { api } from '@/lib/api'
 import { FilterModal, type DirectoryFilters } from '@/components/FilterModal'
 import { FilterPills } from '@/components/FilterPills'
 import { getIdentityLabel } from '@/lib/culturalIdentities'
 import { applyClientSideFilters } from '@/lib/applyDirectoryFilters'
+import { normalizeOrgTypeLabel } from '@/lib/orgTypeDisplay'
 import { cn } from '@/lib/utils'
 
 interface Org {
@@ -255,7 +256,7 @@ export function OrgDirectory() {
           <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
         </div>
       ) : viewMode === 'map' ? (
-        <DirectoryMap
+        <LazyDirectoryMap
           events={filteredEvents}
           onViewDetails={(event) => navigate(`/events/${event.id}`, { state: { fromOrgDirectory: true, orgId } })}
           culturalIdentityLabel={
@@ -306,7 +307,7 @@ export function OrgDirectory() {
                     <p className="text-sm text-zinc-400">
                       {event.organization.name}
                       {event.organization.type && (
-                        <span className="text-zinc-500"> · {event.organization.type}</span>
+                        <span className="text-zinc-500"> · {normalizeOrgTypeLabel(event.organization.type)}</span>
                       )}
                     </p>
                   </div>

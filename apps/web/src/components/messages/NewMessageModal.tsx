@@ -91,22 +91,19 @@ export function NewMessageModal({ orgId, onClose, onSelectMember }: NewMessageMo
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center shrink-0">
                     <span className="font-medium text-white">
-                      {(member.name || '?').charAt(0)}
+                      {(member.name || 'Member').charAt(0)}
                     </span>
                   </div>
                 )}
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className="font-medium text-white truncate">{member.name}</p>
+                    <p className="font-medium text-white truncate">{member.name?.trim() || 'Member'}</p>
                     {member.role === 'restricted' && (
                       <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">
                         Restricted
                       </span>
                     )}
                   </div>
-                  {member.email && (
-                    <p className="text-sm text-zinc-500 truncate">{member.email}</p>
-                  )}
                 </div>
               </button>
             ))

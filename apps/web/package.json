@@ -13,6 +13,7 @@
   "dependencies": {
     "@membercore/core": "*",
     "@membercore/services": "*",
+    "@react-oauth/google": "^0.13.4",
     "axios": "^1.7.7",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
@@ -24,8 +25,8 @@
     "react-map-gl": "^8.1.0",
     "react-qr-code": "^2.0.18",
     "react-router-dom": "^6.28.0",
-    "tailwind-merge": "^2.5.4",
-    "swr": "^2.2.5"
+    "swr": "^2.2.5",
+    "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

@@ -30,7 +30,6 @@ interface Org {
   platform_admin_owned?: boolean
 }
 
-const CHECKLIST_KEY = 'membercore_trial_checklist'
 const TRIAL_DAYS = 30
 
 function parseTrialStart(val: unknown): Date | null {
@@ -84,40 +83,45 @@ interface ChecklistState {
   duesPlan: boolean
 }
 
-function useChecklist(orgId: string): [ChecklistState, (key: keyof ChecklistState, value: boolean) => void] {
-  const key = `${CHECKLIST_KEY}_${orgId}`
-  const [state, setState] = useState<ChecklistState>(() => {
-    try {
-      const stored = localStorage.getItem(key)
-      if (stored) return JSON.parse(stored)
-    } catch {}
-    return { publicEvent: false, privateChannel: false, approvalMembership: false, duesPlan: false }
-  })
-
-  const setItem = (k: keyof ChecklistState, value: boolean) => {
-    setState((prev) => {
-      const next = { ...prev, [k]: value }
-      try {
-        localStorage.setItem(key, JSON.stringify(next))
-      } catch {}
-      return next
-    })
-  }
-
-  return [state, setItem]
-}
-
 export function OrgHome() {
   const { orgId } = useParams<{ orgId: string }>()
   const navigate = useNavigate()
   const [org, setOrg] = useState<Org | null>(null)
   const [role, setRole] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [checklist, setChecklist] = useState<ChecklistState>({
+    publicEvent: false,
+    privateChannel: false,
+    approvalMembership: false,
+    duesPlan: false,
+  })
+  const [proPlan, setProPlan] = useState<'pro_monthly' | 'pro_annual'>('pro_monthly')
+  const [proCheckoutLoading, setProCheckoutLoading] = useState(false)
+  const [proCheckoutError, setProCheckoutError] = useState<string | null>(null)
 
   const trial = useTrialCountdown(org)
-  const [checklist, setChecklist] = useChecklist(orgId || '')
 
   const duesLabel = org?.dues_label || 'Dues'
+
+  const handleUpgradeToPro = async () => {
+    if (!orgId) return
+    setProCheckoutLoading(true)
+    setProCheckoutError(null)
+    try {
+      const { data } = await api.post(`/billing/${orgId}/billing/create-checkout-session`, {
+        plan: proPlan,
+      })
+      if (data?.checkout_url) {
+        window.location.href = data.checkout_url
+        return
+      }
+      setProCheckoutError('Could not start checkout. Please try again.')
+    } catch (err: any) {
+      setProCheckoutError(err?.response?.data?.detail || 'Could not start checkout. Please try again.')
+    } finally {
+      setProCheckoutLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!orgId) return
@@ -146,6 +150,47 @@ export function OrgHome() {
       navigate(`/org/${orgId}/directory`, { replace: true })
     }
   }, [loading, org, role, orgId, navigate])
+
+  useEffect(() => {
+    if (!orgId || role === null) return
+    if (role !== 'owner' && role !== 'admin') return
+
+    let cancelled = false
+    Promise.all([
+      api.get(`/events/${orgId}`),
+      api.get(`/chat/${orgId}/channels`),
+      api.get(`/dues/${orgId}/plans`),
+      api.get(`/billing/${orgId}/billing`),
+    ])
+      .then(([eventsRes, channelsRes, plansRes, billingRes]) => {
+        if (cancelled) return
+        const events = Array.isArray(eventsRes.data) ? eventsRes.data : []
+        const channels = Array.isArray(channelsRes.data) ? channelsRes.data : []
+        const plans = Array.isArray(plansRes.data) ? plansRes.data : []
+        const billing = billingRes.data || {}
+
+        setChecklist({
+          publicEvent: events.some((e: any) => Boolean(e?.is_public_directory)),
+          privateChannel: channels.some((c: any) => Boolean(c?.is_restricted) || c?.visibility === 'restricted'),
+          approvalMembership: Boolean(billing?.stripe_connect_ready),
+          duesPlan: plans.length > 0,
+        })
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChecklist({
+            publicEvent: false,
+            privateChannel: false,
+            approvalMembership: false,
+            duesPlan: false,
+          })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [orgId, role])
 
   if (loading) {
     return (
@@ -187,7 +232,7 @@ export function OrgHome() {
   const checklistItems = [
     { key: 'publicEvent' as const, label: 'Create one public event that appears in the directory', desc: 'In your club calendar, turn on \'Public in directory\'.' },
     { key: 'privateChannel' as const, label: 'Create a private leadership chat channel', desc: 'Create an admin-only channel for leaders/officers.' },
-    { key: 'approvalMembership' as const, label: 'Turn on approval-based membership', desc: 'Create an invite link so new members go into pending approvals.' },
+    { key: 'approvalMembership' as const, label: 'Connect Stripe payouts for your organization', desc: 'In Settings > Billing > Organization Payouts, connect Stripe to collect dues and sell tickets.' },
     { key: 'duesPlan' as const, label: 'Set up one contribution / dues plan', desc: 'Create at least one dues plan so you can collect payments.' },
   ]
 
@@ -256,6 +301,36 @@ export function OrgHome() {
                     <p className="text-xs text-zinc-500 mt-1">
                       You can still post events in the public directory for free.
                     </p>
+                    <div className="mt-3">
+                      <p className="text-xs text-zinc-400 mb-2">Choose a plan:</p>
+                      <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-900/70 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setProPlan('pro_monthly')}
+                          className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                            proPlan === 'pro_monthly'
+                              ? 'bg-white text-black font-semibold'
+                              : 'text-zinc-300 hover:text-white'
+                          }`}
+                        >
+                          Monthly ($97)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setProPlan('pro_annual')}
+                          className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                            proPlan === 'pro_annual'
+                              ? 'bg-white text-black font-semibold'
+                              : 'text-zinc-300 hover:text-white'
+                          }`}
+                        >
+                          Annual ($970)
+                          <span className="ml-1.5 inline-flex rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                            Save 17%
+                          </span>
+                        </button>
+                      </div>
+                    </div>
                   </>
                 ) : trial.daysLeft <= 5 ? (
                   <>
@@ -276,11 +351,15 @@ export function OrgHome() {
                 )}
                 <button
                   type="button"
-                  onClick={() => navigate(`/org/${orgId}/settings`)}
-                  className="mt-3 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-zinc-200"
+                  onClick={handleUpgradeToPro}
+                  disabled={proCheckoutLoading}
+                  className="mt-3 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-zinc-200 disabled:opacity-60"
                 >
-                  Go Pro
+                  {proCheckoutLoading ? 'Loading...' : proPlan === 'pro_annual' ? 'Go Pro - Annual' : 'Go Pro - Monthly'}
                 </button>
+                {proCheckoutError ? (
+                  <p className="text-xs text-red-400 mt-2">{proCheckoutError}</p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -321,11 +400,9 @@ export function OrgHome() {
           <p className="text-sm text-zinc-400 mb-4">{checklistComplete}/4 complete</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {checklistItems.map(({ key, label, desc }) => (
-              <button
+              <div
                 key={key}
-                type="button"
-                onClick={() => setChecklist(key, !checklist[key])}
-                className="flex items-start gap-3 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700 hover:border-zinc-600 text-left"
+                className="flex items-start gap-3 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700 text-left"
               >
                 <div
                   className={`h-6 w-6 rounded-full shrink-0 flex items-center justify-center mt-0.5 ${
@@ -340,7 +417,7 @@ export function OrgHome() {
                   </div>
                   <div className="text-sm text-zinc-500 mt-0.5">{desc}</div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </div>

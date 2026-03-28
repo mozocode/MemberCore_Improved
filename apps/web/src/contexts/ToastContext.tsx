@@ -12,6 +12,7 @@ export interface Toast {
 interface ToastContextType {
   toasts: Toast[]
   toast: (message: string, type?: ToastType, duration?: number) => void
+  showToast: (message: string, type?: ToastType, duration?: number) => void
   success: (message: string, duration?: number) => void
   error: (message: string, duration?: number) => void
   dismiss: (id: string) => void
@@ -56,8 +57,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     [addToast],
   )
 
+  // Backward-compatible alias used across pages/components.
+  const showToast = toast
+
   return (
-    <ToastContext.Provider value={{ toasts, toast, success, error, dismiss }}>
+    <ToastContext.Provider value={{ toasts, toast, showToast, success, error, dismiss }}>
       {children}
       <ToastStack />
     </ToastContext.Provider>

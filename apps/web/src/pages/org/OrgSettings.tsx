@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { useParams, useNavigate, useLocation, useSearchParams, Link } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { hasPermission, type OrgRole } from '@/lib/permissions'
@@ -14,6 +14,7 @@ import {
   Link2,
   PlayCircle,
   ChevronRight,
+  ChevronDown,
   Users,
   Plus,
   X,
@@ -49,12 +50,10 @@ import { SPORTS_LIST } from '@/lib/sports'
 import { compressImageFile } from '@/lib/imageCompression'
 import { getDisplayName } from '@/lib/displayName'
 import { useAuth } from '@/contexts/AuthContext'
-import { Html5Qrcode } from 'html5-qrcode'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
-import QRCode from 'react-qr-code'
 
 interface SettingOption {
   id: string
@@ -77,16 +76,65 @@ const allSettings: SettingOption[] = [
   { id: 'affiliate', title: 'Affiliate Settings', description: 'Manage your affiliate program with Rewardful.', icon: Link2, permission: 'org.settings', route: 'affiliate' },
   { id: 'video-tutorials', title: 'Video Tutorials', description: 'Watch short videos on how to use the platform.', icon: PlayCircle, permission: 'settings.personal', route: 'video-tutorials' },
 ]
+const ALLOWED_SETTINGS_WHEN_INACTIVE = new Set(['personal', 'my-tickets'])
+const TRIAL_DAYS = 30
+
+function parseOrgDate(val: string | { _seconds: number } | undefined): Date | null {
+  if (!val) return null
+  if (typeof val === 'string') return new Date(val)
+  if (typeof val === 'object' && val !== null && '_seconds' in val) {
+    return new Date((val as { _seconds: number })._seconds * 1000)
+  }
+  return null
+}
+
+function getTrialEnd(org: {
+  trial_start_date?: string | { _seconds: number }
+  trial_end_date?: string | { _seconds: number }
+}): Date | null {
+  const end = parseOrgDate(org.trial_end_date)
+  if (end) return end
+  const start = parseOrgDate(org.trial_start_date)
+  if (!start) return null
+  const d = new Date(start)
+  d.setDate(d.getDate() + TRIAL_DAYS)
+  return d
+}
+
+function isOrgBillingActive(org: {
+  is_pro?: boolean
+  platform_admin_owned?: boolean
+  billing_exempt?: boolean
+  billing_status?: string
+  trial_start_date?: string | { _seconds: number }
+  trial_end_date?: string | { _seconds: number }
+} | null): boolean {
+  if (!org) return true
+  if (org.is_pro || org.platform_admin_owned || org.billing_exempt) return true
+  const status = String(org.billing_status || '').toLowerCase()
+  if (status === 'active' || status === 'trial' || status === 'exempt') return true
+  const trialEnd = getTrialEnd(org)
+  return trialEnd !== null && trialEnd.getTime() > Date.now()
+}
 
 export function OrgSettings() {
   const { orgId } = useParams<{ orgId: string }>()
   const navigate = useNavigate()
   const [role, setRole] = useState<OrgRole>('member')
   const [_pendingCount, setPendingCount] = useState(0)
+  const [billingActive, setBillingActive] = useState(true)
 
   useEffect(() => {
     if (!orgId) return
     api.get(`/organizations/${orgId}/members/me`).then((r) => setRole((r.data.role || 'member') as OrgRole)).catch(() => setRole('member'))
+  }, [orgId])
+
+  useEffect(() => {
+    if (!orgId) return
+    api
+      .get(`/organizations/${orgId}`)
+      .then((r) => setBillingActive(isOrgBillingActive(r.data)))
+      .catch(() => setBillingActive(true))
   }, [orgId])
 
   useEffect(() => {
@@ -99,10 +147,14 @@ export function OrgSettings() {
 
   const location = useLocation()
   const subPath = location.pathname.split('/settings/')[1]?.split('/')[0] || ''
-  const visibleSettings = allSettings.filter((s) => hasPermission(role, s.permission))
+  const visibleSettings = allSettings.filter((s) => {
+    if (!hasPermission(role, s.permission)) return false
+    if (!billingActive && !ALLOWED_SETTINGS_WHEN_INACTIVE.has(s.route)) return false
+    return true
+  })
 
   if (subPath) {
-    return <OrgSettingsOutlet subPath={subPath} orgId={orgId!} role={role} allSettings={allSettings} visibleSettings={visibleSettings} />
+    return <OrgSettingsOutlet subPath={subPath} orgId={orgId!} role={role} allSettings={allSettings} visibleSettings={visibleSettings} billingActive={billingActive} />
   }
 
   return (
@@ -137,18 +189,21 @@ function OrgSettingsOutlet({
   subPath,
   orgId,
   role,
+  billingActive,
   allSettings,
   visibleSettings: _visibleSettings,
 }: {
   subPath: string
   orgId: string
   role: OrgRole
+  billingActive: boolean
   allSettings: SettingOption[]
   visibleSettings: SettingOption[]
 }) {
   const navigate = useNavigate()
   const option = allSettings.find((s) => s.route === subPath)
-  const canAccess = option && hasPermission(role, option.permission)
+  const billingAllows = billingActive || ALLOWED_SETTINGS_WHEN_INACTIVE.has(subPath)
+  const canAccess = option && hasPermission(role, option.permission) && billingAllows
 
   useEffect(() => {
     if (subPath === 'members') {
@@ -220,6 +275,7 @@ function SettingsPage({ subPath, orgId }: { subPath: string; orgId: string }) {
 
 const NICKNAME_MAX_LENGTH = 50
 const TITLE_MAX_LENGTH = 50
+const LazyQRCode = lazy(() => import('react-qr-code'))
 
 function SettingsPersonal({ orgId }: { orgId: string }) {
   const navigate = useNavigate()
@@ -773,14 +829,21 @@ interface BillingState {
   trial_end_date?: string | null
   period_end?: string | null
   stripe_customer_id?: string | null
+  stripe_connected_account_id?: string | null
+  stripe_connect_onboarded?: boolean
+  stripe_connect_charges_enabled?: boolean
+  stripe_connect_payouts_enabled?: boolean
+  stripe_connect_ready?: boolean
   is_billing_exempt?: boolean
 }
 
 function SettingsBilling({ orgId }: { orgId: string }) {
   const [billing, setBilling] = useState<BillingState | null>(null)
   const [loading, setLoading] = useState(true)
-  const [actionLoading, setActionLoading] = useState(false)
+  const [billingActionLoading, setBillingActionLoading] = useState(false)
+  const [payoutActionLoading, setPayoutActionLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [subscribePlan, setSubscribePlan] = useState<'pro_monthly' | 'pro_annual'>('pro_monthly')
 
   useEffect(() => {
     api.get(`/billing/${orgId}/billing`)
@@ -790,15 +853,11 @@ function SettingsBilling({ orgId }: { orgId: string }) {
   }, [orgId])
 
   const handleSubscribe = async () => {
-    setActionLoading(true)
+    setBillingActionLoading(true)
     setError(null)
     try {
-      const successUrl = `${window.location.origin}/org/${orgId}/settings?tab=club&billing=success`
-      const cancelUrl = `${window.location.origin}/org/${orgId}/settings?tab=club`
-      const { data } = await api.post(`/billing/${orgId}/billing/checkout`, {
-        success_url: successUrl,
-        cancel_url: cancelUrl,
-        plan: 'pro',
+      const { data } = await api.post(`/billing/${orgId}/billing/create-checkout-session`, {
+        plan: subscribePlan,
       })
       if (data.checkout_url) {
         window.location.href = data.checkout_url
@@ -806,12 +865,12 @@ function SettingsBilling({ orgId }: { orgId: string }) {
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Could not start checkout. Please try again.')
     } finally {
-      setActionLoading(false)
+      setBillingActionLoading(false)
     }
   }
 
   const handleManageBilling = async () => {
-    setActionLoading(true)
+    setBillingActionLoading(true)
     setError(null)
     try {
       const returnUrl = `${window.location.origin}/org/${orgId}/settings?tab=club`
@@ -826,7 +885,51 @@ function SettingsBilling({ orgId }: { orgId: string }) {
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Could not open billing portal. Please try again.')
     } finally {
-      setActionLoading(false)
+      setBillingActionLoading(false)
+    }
+  }
+
+  const handleConnectPayouts = async () => {
+    setPayoutActionLoading(true)
+    setError(null)
+    try {
+      const returnUrl = `${window.location.origin}/org/${orgId}/settings?tab=club&stripe=connected`
+      const { data } = await api.post(`/billing/${orgId}/billing/connect/onboarding`, {
+        refresh_url: returnUrl,
+        return_url: returnUrl,
+      })
+      if (data.url) {
+        window.location.href = data.url
+      }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || 'Could not start Stripe payouts onboarding. Please try again.'
+      if (typeof detail === 'string' && detail.includes("signed up for Connect")) {
+        setError(
+          'Stripe Connect is not enabled on this Stripe account yet. Enable Connect first at https://dashboard.stripe.com/connect, then try again.',
+        )
+      } else {
+        setError(detail)
+      }
+    } finally {
+      setPayoutActionLoading(false)
+    }
+  }
+
+  const handleOpenPayoutDashboard = async () => {
+    setPayoutActionLoading(true)
+    setError(null)
+    try {
+      const redirectUrl = `${window.location.origin}/org/${orgId}/settings?tab=club`
+      const { data } = await api.post(`/billing/${orgId}/billing/connect/login-link`, {
+        redirect_url: redirectUrl,
+      })
+      if (data.url) {
+        window.location.href = data.url
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Could not open Stripe payouts dashboard. Please try again.')
+    } finally {
+      setPayoutActionLoading(false)
     }
   }
 
@@ -843,6 +946,8 @@ function SettingsBilling({ orgId }: { orgId: string }) {
   const isTrial = billing?.billing_status === 'trial'
   const isPastDue = billing?.billing_status === 'past_due'
   const isExempt = billing?.is_billing_exempt
+  const hasConnectedAccount = Boolean(billing?.stripe_connected_account_id)
+  const payoutsReady = Boolean(billing?.stripe_connect_ready)
 
   const statusColor = isActive
     ? 'text-green-400'
@@ -925,8 +1030,71 @@ function SettingsBilling({ orgId }: { orgId: string }) {
           <p className="text-zinc-400 text-sm mt-1">
             Unlock chat, event creation, dues management, polls, analytics, and more for your organization.
           </p>
+          <div className="mt-3">
+            <p className="text-xs text-zinc-400 mb-2">Choose your plan:</p>
+            <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-900/70 p-1">
+              <button
+                type="button"
+                onClick={() => setSubscribePlan('pro_monthly')}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                  subscribePlan === 'pro_monthly'
+                    ? 'bg-white text-black font-semibold'
+                    : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                Monthly ($97)
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubscribePlan('pro_annual')}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                  subscribePlan === 'pro_annual'
+                    ? 'bg-white text-black font-semibold'
+                    : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                Annual ($970)
+                <span className="ml-1.5 inline-flex rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                  Save 17%
+                </span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
+
+      {/* Organization payouts */}
+      <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6">
+        <h3 className="text-lg font-semibold text-white mb-2">Organization Payouts</h3>
+        <p className="text-sm text-zinc-400 mb-4">
+          Connect your organization Stripe account so dues and ticket payments are paid out directly to your organization.
+        </p>
+        <div className="flex items-center gap-2 mb-4">
+          <span className={`h-2.5 w-2.5 rounded-full ${payoutsReady ? 'bg-green-500' : 'bg-amber-500'}`} />
+          <span className={`text-sm font-medium ${payoutsReady ? 'text-green-400' : 'text-amber-400'}`}>
+            {payoutsReady ? 'Payouts connected' : hasConnectedAccount ? 'Connection setup incomplete' : 'Not connected'}
+          </span>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3">
+          {!payoutsReady ? (
+            <button
+              onClick={handleConnectPayouts}
+              disabled={payoutActionLoading}
+              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"
+            >
+              {payoutActionLoading ? 'Loading...' : hasConnectedAccount ? 'Continue Stripe Setup' : 'Connect Stripe Payouts'}
+            </button>
+          ) : (
+            <button
+              onClick={handleOpenPayoutDashboard}
+              disabled={payoutActionLoading}
+              className="px-6 py-3 bg-zinc-100 text-black hover:bg-zinc-200 font-semibold rounded-lg transition-colors disabled:opacity-50"
+            >
+              {payoutActionLoading ? 'Loading...' : 'Open Stripe Express Dashboard'}
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* Error */}
       {error && (
@@ -943,18 +1111,22 @@ function SettingsBilling({ orgId }: { orgId: string }) {
             {!isPro ? (
               <button
                 onClick={handleSubscribe}
-                disabled={actionLoading}
+                disabled={billingActionLoading}
                 className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"
               >
-                {actionLoading ? 'Loading...' : 'Subscribe to Pro'}
+                {billingActionLoading
+                  ? 'Loading...'
+                  : subscribePlan === 'pro_annual'
+                    ? 'Subscribe to Pro (Annual)'
+                    : 'Subscribe to Pro (Monthly)'}
               </button>
             ) : (
               <button
                 onClick={handleManageBilling}
-                disabled={actionLoading}
+                disabled={billingActionLoading}
                 className="px-6 py-3 bg-white text-black hover:bg-zinc-200 font-semibold rounded-lg transition-colors disabled:opacity-50"
               >
-                {actionLoading ? 'Loading...' : 'Manage Subscription'}
+                {billingActionLoading ? 'Loading...' : 'Manage Subscription'}
               </button>
             )}
           </div>
@@ -965,7 +1137,7 @@ function SettingsBilling({ orgId }: { orgId: string }) {
           </p>
         )}
         <p className="text-zinc-500 text-xs mt-4">
-          Payments are processed securely through Stripe. You can update your payment method, view invoices, or cancel your subscription at any time.
+          Manage Billing is for your MemberCore Pro subscription only. Organization Payouts above is where you connect Stripe to receive dues and ticket funds.
         </p>
       </div>
     </div>
@@ -985,6 +1157,7 @@ interface MemberStatusRow {
   user_id: string
   user_name: string
   user_email: string
+  user_avatar?: string | null
   nickname?: string
   title?: string
   total_paid: number
@@ -992,26 +1165,42 @@ interface MemberStatusRow {
   status: string
 }
 
+interface MemberPaymentRow {
+  id: string
+  amount: number
+  payment_method: string
+  paid_date?: string
+  created_at?: string
+  notes?: string
+  plan_id?: string
+  plan_name?: string
+}
+
 const PAYMENT_METHODS = [
   { value: 'cash', label: 'Cash' },
   { value: 'check', label: 'Check' },
+  { value: 'cashapp', label: 'CashApp' },
   { value: 'venmo', label: 'Venmo' },
   { value: 'zelle', label: 'Zelle' },
   { value: 'other', label: 'Other' },
 ]
 
 function SettingsDues({ orgId }: { orgId: string }) {
-  const [plans, setPlans] = useState<{ id: string; name: string; amount: number; total_amount?: number; due_date?: string; frequency: string; payment_option?: string }[]>([])
+  type PlanMode = 'full' | 'custom' | 'installment'
+  const [plans, setPlans] = useState<{ id: string; name: string; amount: number; total_amount?: number; due_date?: string; frequency: string; payment_option?: string; installment_months?: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [createModal, setCreateModal] = useState(false)
-  const [editingPlan, setEditingPlan] = useState<{ id: string; name: string; amount: number; total_amount?: number; due_date?: string; frequency: string; payment_option?: string } | null>(null)
+  const [editingPlan, setEditingPlan] = useState<{ id: string; name: string; amount: number; total_amount?: number; due_date?: string; frequency: string; payment_option?: string; installment_months?: number } | null>(null)
   const [planName, setPlanName] = useState('')
   const [planAmount, setPlanAmount] = useState('')
   const [planTotalAmount, setPlanTotalAmount] = useState('')
   const [planDate, setPlanDate] = useState('')
-  const [planPaymentOption, setPlanPaymentOption] = useState<'full_only' | 'custom_only'>('full_only')
+  const [planInstallmentMonths, setPlanInstallmentMonths] = useState('')
+  const [planMode, setPlanMode] = useState<PlanMode>('installment')
   const [planError, setPlanError] = useState('')
   const [planLoading, setPlanLoading] = useState(false)
+  const [planListError, setPlanListError] = useState('')
+  const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null)
   const [org, setOrg] = useState<{ dues_label?: string } | null>(null)
   const [terminologyValue, setTerminologyValue] = useState<string>('Dues')
   const [terminologySaving, setTerminologySaving] = useState(false)
@@ -1019,6 +1208,11 @@ function SettingsDues({ orgId }: { orgId: string }) {
 
   const [treasuryStats, setTreasuryStats] = useState<TreasuryStats | null>(null)
   const [memberStatuses, setMemberStatuses] = useState<MemberStatusRow[]>([])
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null)
+  const [memberPaymentsById, setMemberPaymentsById] = useState<Record<string, MemberPaymentRow[]>>({})
+  const [memberPaymentsLoadingId, setMemberPaymentsLoadingId] = useState<string | null>(null)
+  const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null)
+  const [paymentListError, setPaymentListError] = useState('')
   const [treasuryLoading, setTreasuryLoading] = useState(true)
   const [showRecordModal, setShowRecordModal] = useState(false)
   const [recordForm, setRecordForm] = useState({
@@ -1033,7 +1227,24 @@ function SettingsDues({ orgId }: { orgId: string }) {
   const [recordSubmitting, setRecordSubmitting] = useState(false)
   const [recordError, setRecordError] = useState('')
   const [remindLoading, setRemindLoading] = useState(false)
+  const [remindMessage, setRemindMessage] = useState('')
   const [markingMemberId, setMarkingMemberId] = useState<string | null>(null)
+
+  const autoInstallmentMonthsFromDueDate = (dueDateValue: string) => {
+    if (!dueDateValue) return null
+    const due = new Date(`${dueDateValue}T00:00:00`)
+    if (Number.isNaN(due.getTime())) return null
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    if (due < today) return null
+    return (due.getFullYear() - today.getFullYear()) * 12 + (due.getMonth() - today.getMonth()) + 1
+  }
+  const parsedPlanMonths =
+    planInstallmentMonths.trim() && !Number.isNaN(Number(planInstallmentMonths)) && Number(planInstallmentMonths) > 0
+      ? Number(planInstallmentMonths)
+      : null
+  const autoPlanMonths = autoInstallmentMonthsFromDueDate(planDate)
+  const previewInstallmentMonths = parsedPlanMonths ?? autoPlanMonths
 
   const fetchPlans = useCallback(async () => {
     if (!orgId) return
@@ -1085,18 +1296,26 @@ function SettingsDues({ orgId }: { orgId: string }) {
     setPlanAmount('')
     setPlanTotalAmount('')
     setPlanDate('')
-    setPlanPaymentOption('full_only')
+    setPlanInstallmentMonths('')
+    setPlanMode('installment')
     setPlanError('')
     setCreateModal(true)
   }
 
-  const openEditPlanModal = (p: { id: string; name: string; amount: number; total_amount?: number; due_date?: string; frequency: string; payment_option?: string }) => {
+  const openEditPlanModal = (p: { id: string; name: string; amount: number; total_amount?: number; due_date?: string; frequency: string; payment_option?: string; installment_months?: number }) => {
     setEditingPlan(p)
     setPlanName(p.name)
     setPlanAmount(String(p.amount))
     setPlanTotalAmount(p.total_amount != null ? String(p.total_amount) : '')
     setPlanDate(p.due_date || '')
-    setPlanPaymentOption((p.payment_option === 'custom_only' ? 'custom_only' : 'full_only'))
+    setPlanMode(
+      p.payment_option === 'custom_only'
+        ? 'custom'
+        : p.payment_option === 'installment_only' || p.installment_months
+          ? 'installment'
+          : 'full',
+    )
+    setPlanInstallmentMonths(p.installment_months != null ? String(p.installment_months) : '')
     setPlanError('')
     setCreateModal(true)
   }
@@ -1108,36 +1327,79 @@ function SettingsDues({ orgId }: { orgId: string }) {
     setPlanAmount('')
     setPlanTotalAmount('')
     setPlanDate('')
-    setPlanPaymentOption('full_only')
+    setPlanInstallmentMonths('')
+    setPlanMode('installment')
     setPlanError('')
   }
 
   const handleCreatePlan = async (e: React.FormEvent) => {
     e.preventDefault()
     setPlanError('')
-    const amount = parseFloat(planAmount)
     const totalAmountParsed = planTotalAmount.trim() ? parseFloat(planTotalAmount) : null
+    const monthsParsed = planInstallmentMonths.trim() ? Number(planInstallmentMonths.trim()) : null
+    const autoMonthsFromDueDate = autoInstallmentMonthsFromDueDate(planDate)
+    const amountParsed = parseFloat(planAmount)
     if (!planName.trim()) {
       setPlanError('Name is required')
       return
     }
-    if (isNaN(amount) || amount <= 0) {
-      setPlanError('Amount must be greater than 0')
-      return
+
+    let payloadAmount = amountParsed
+    let payloadTotalAmount: number | undefined
+    let payloadPaymentOption: 'full_only' | 'custom_only' | 'installment_only' = 'full_only'
+    let payloadFrequency = editingPlan?.frequency || 'one_time'
+    let payloadInstallmentMonths: number | undefined
+
+    if (planMode === 'full') {
+      if (Number.isNaN(amountParsed) || amountParsed <= 0) {
+        setPlanError('Amount due must be greater than 0')
+        return
+      }
+      payloadAmount = amountParsed
+      payloadPaymentOption = 'full_only'
+      payloadFrequency = 'one_time'
+    } else if (planMode === 'custom') {
+      if (Number.isNaN(amountParsed) || amountParsed <= 0) {
+        setPlanError('Minimum payment must be greater than 0')
+        return
+      }
+      if (totalAmountParsed !== null && (isNaN(totalAmountParsed) || totalAmountParsed < amountParsed)) {
+        setPlanError('Total amount must be at least the minimum payment')
+        return
+      }
+      payloadAmount = amountParsed
+      payloadTotalAmount = totalAmountParsed ?? undefined
+      payloadPaymentOption = 'custom_only'
+      payloadFrequency = 'one_time'
+    } else {
+      if (totalAmountParsed === null || totalAmountParsed <= 0) {
+        setPlanError('Set a total amount when using installment months')
+        return
+      }
+      const effectiveMonths = Number.isInteger(monthsParsed) && (monthsParsed ?? 0) > 0
+        ? (monthsParsed as number)
+        : autoMonthsFromDueDate
+      if (!effectiveMonths || effectiveMonths <= 0) {
+        setPlanError('Set installment months or set a valid future due date to auto-calculate months')
+        return
+      }
+      payloadAmount = Number((totalAmountParsed / effectiveMonths).toFixed(2))
+      payloadTotalAmount = totalAmountParsed
+      payloadPaymentOption = 'installment_only'
+      payloadFrequency = 'monthly'
+      payloadInstallmentMonths = effectiveMonths
     }
-    if (totalAmountParsed !== null && (isNaN(totalAmountParsed) || totalAmountParsed < amount)) {
-      setPlanError('Total amount must be at least the installment amount')
-      return
-    }
+
     setPlanLoading(true)
     try {
       const payload = {
         name: planName.trim(),
-        amount,
-        total_amount: totalAmountParsed ?? undefined,
+        amount: payloadAmount,
+        total_amount: payloadTotalAmount,
         due_date: planDate || undefined,
-        frequency: editingPlan?.frequency || 'one_time',
-        payment_option: planPaymentOption,
+        frequency: payloadFrequency,
+        payment_option: payloadPaymentOption,
+        installment_months: payloadInstallmentMonths,
       }
       if (editingPlan) {
         await api.put(`/dues/${orgId}/plans/${editingPlan.id}`, payload)
@@ -1150,6 +1412,23 @@ function SettingsDues({ orgId }: { orgId: string }) {
       setPlanError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (editingPlan ? 'Failed to update plan' : 'Failed to create plan'))
     } finally {
       setPlanLoading(false)
+    }
+  }
+
+  const handleDeletePlan = async (plan: { id: string; name: string }) => {
+    if (!orgId) return
+    if (!window.confirm(`Delete "${plan.name}"? This removes it from member payment options.`)) return
+    setPlanListError('')
+    setDeletingPlanId(plan.id)
+    try {
+      await api.delete(`/dues/${orgId}/plans/${plan.id}`)
+      if (editingPlan?.id === plan.id) closePlanModal()
+      await Promise.all([fetchPlans(), fetchTreasury()])
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setPlanListError(typeof detail === 'string' ? detail : 'Failed to delete plan')
+    } finally {
+      setDeletingPlanId(null)
     }
   }
 
@@ -1207,11 +1486,57 @@ function SettingsDues({ orgId }: { orgId: string }) {
 
   const handleSendReminders = async () => {
     setRemindLoading(true)
+    setRemindMessage('')
+    setPaymentListError('')
     try {
-      await api.post(`/dues/${orgId}/remind`)
+      const res = await api.post<{ message?: string }>(`/dues/${orgId}/remind`)
+      setRemindMessage(
+        typeof res.data?.message === 'string' ? res.data.message : 'Reminders processed.',
+      )
       fetchTreasury()
+    } catch {
+      setRemindMessage('')
+      setPaymentListError('Failed to send reminders.')
     } finally {
       setRemindLoading(false)
+    }
+  }
+
+  const toggleMemberPayments = async (memberId: string) => {
+    if (expandedMemberId === memberId) {
+      setExpandedMemberId(null)
+      return
+    }
+    setExpandedMemberId(memberId)
+    if (memberPaymentsById[memberId]) return
+    setMemberPaymentsLoadingId(memberId)
+    try {
+      const res = await api.get(`/dues/${orgId}/members/${memberId}/payments`)
+      setMemberPaymentsById((prev) => ({ ...prev, [memberId]: Array.isArray(res.data) ? res.data : [] }))
+    } catch {
+      setMemberPaymentsById((prev) => ({ ...prev, [memberId]: [] }))
+    } finally {
+      setMemberPaymentsLoadingId(null)
+    }
+  }
+
+  const handleDeletePayment = async (memberId: string, paymentId: string) => {
+    if (!orgId) return
+    if (!window.confirm('Delete this payment record? This cannot be undone.')) return
+    setPaymentListError('')
+    setDeletingPaymentId(paymentId)
+    try {
+      await api.delete(`/dues/${orgId}/payments/${paymentId}`)
+      setMemberPaymentsById((prev) => ({
+        ...prev,
+        [memberId]: (prev[memberId] || []).filter((p) => p.id !== paymentId),
+      }))
+      await fetchTreasury()
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setPaymentListError(typeof detail === 'string' ? detail : 'Failed to delete payment')
+    } finally {
+      setDeletingPaymentId(null)
     }
   }
 
@@ -1295,6 +1620,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
             <span className="ml-2">Create Plan</span>
           </Button>
         </div>
+        {planListError ? <p className="text-sm text-red-400 mb-3">{planListError}</p> : null}
         {loading ? (
           <div className="flex justify-center py-8"><Loader2 className="h-8 w-8 animate-spin text-zinc-500" /></div>
         ) : plans.length === 0 ? (
@@ -1306,10 +1632,24 @@ function SettingsDues({ orgId }: { orgId: string }) {
                 <span className="font-medium text-white">{p.name}</span>
                 <div className="flex items-center gap-3">
                   <span className="text-zinc-400">
-                    ${p.amount.toFixed(2)}{p.total_amount != null ? ` / $${p.total_amount.toFixed(2)} total` : ''}{p.due_date ? ` • Due ${new Date(p.due_date).toLocaleDateString()}` : ''}
+                    ${p.amount.toFixed(2)}
+                    {p.installment_months ? ` x ${p.installment_months} months` : ''}
+                    {p.total_amount != null ? ` / $${p.total_amount.toFixed(2)} total` : ''}
+                    {p.due_date ? ` • Due ${new Date(p.due_date).toLocaleDateString()}` : ''}
                   </span>
                   <Button type="button" variant="ghost" size="sm" onClick={() => openEditPlanModal(p)} className="text-zinc-400 hover:text-white p-1.5" title="Edit plan">
                     <Edit2 size={16} />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeletePlan(p)}
+                    disabled={deletingPlanId === p.id}
+                    className="text-zinc-500 hover:text-red-400 p-1.5"
+                    title="Delete plan"
+                  >
+                    {deletingPlanId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 size={16} />}
                   </Button>
                 </div>
               </li>
@@ -1330,10 +1670,12 @@ function SettingsDues({ orgId }: { orgId: string }) {
             <span className="ml-2">Send Reminders</span>
           </Button>
         </div>
+        {remindMessage ? <p className="text-sm text-emerald-400 mb-3">{remindMessage}</p> : null}
         {treasuryLoading ? (
           <div className="flex justify-center py-8"><Loader2 className="h-8 w-8 animate-spin text-zinc-500" /></div>
         ) : treasuryStats ? (
           <>
+            {paymentListError ? <p className="text-sm text-red-400 mb-3">{paymentListError}</p> : null}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
               <div className="rounded-lg bg-zinc-800 border border-zinc-700 p-4">
                 <p className="text-2xl font-bold text-white">${treasuryStats.total_collected.toFixed(2)}</p>
@@ -1363,28 +1705,90 @@ function SettingsDues({ orgId }: { orgId: string }) {
               ) : (
                 <ul className="divide-y divide-zinc-700">
                   {memberStatuses.map((m) => (
-                    <li key={m.member_id} className="flex items-center justify-between gap-4 p-3 bg-zinc-800/50 hover:bg-zinc-800">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-sm font-medium text-zinc-300 shrink-0">
-                          {getDisplayName(m.user_name, m.nickname).charAt(0).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-medium text-white truncate">{getDisplayName(m.user_name, m.nickname)}</p>
-                          <p className="text-xs text-zinc-500 truncate">{m.title ? `${m.title}` : `$${m.total_paid.toFixed(2)} paid`}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {statusBadge(m.status)}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleMarkPaidInFull(m.member_id, m.paid_in_full)}
-                          disabled={markingMemberId === m.member_id || m.paid_in_full}
-                          className="text-xs bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
+                    <li key={m.member_id} className="bg-zinc-800/50 hover:bg-zinc-800">
+                      <div className="flex items-center justify-between gap-4 p-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleMemberPayments(m.member_id)}
+                          className="flex items-center gap-3 min-w-0 text-left"
                         >
-                          {markingMemberId === m.member_id ? <Loader2 className="h-3 w-3 animate-spin" /> : m.paid_in_full ? 'Paid in Full' : 'Mark Paid in Full'}
-                        </Button>
+                          {m.user_avatar ? (
+                            <img
+                              src={m.user_avatar}
+                              alt={getDisplayName(m.user_name, m.nickname)}
+                              className="w-8 h-8 rounded-full object-cover shrink-0 border border-zinc-600"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-sm font-medium text-zinc-300 shrink-0">
+                              {getDisplayName(m.user_name, m.nickname).charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="font-medium text-white truncate flex items-center gap-2">
+                              {expandedMemberId === m.member_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              <span>{getDisplayName(m.user_name, m.nickname)}</span>
+                            </p>
+                            <p className="text-xs text-zinc-500 truncate">${m.total_paid.toFixed(2)} paid</p>
+                          </div>
+                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {statusBadge(m.status)}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleMarkPaidInFull(m.member_id, m.paid_in_full)}
+                            disabled={markingMemberId === m.member_id || m.paid_in_full}
+                            className="text-xs bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
+                          >
+                            {markingMemberId === m.member_id ? <Loader2 className="h-3 w-3 animate-spin" /> : m.paid_in_full ? 'Paid in Full' : 'Mark Paid in Full'}
+                          </Button>
+                        </div>
                       </div>
+                      {expandedMemberId === m.member_id && (
+                        <div className="px-3 pb-3">
+                          {memberPaymentsLoadingId === m.member_id ? (
+                            <div className="rounded-md border border-zinc-700 bg-zinc-900 p-3 text-sm text-zinc-400 flex items-center gap-2">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading payments...
+                            </div>
+                          ) : (
+                            <div className="rounded-md border border-zinc-700 bg-zinc-900 overflow-hidden">
+                              {(memberPaymentsById[m.member_id] || []).length === 0 ? (
+                                <div className="p-3 text-sm text-zinc-500">No recorded payments for this member.</div>
+                              ) : (
+                                <ul className="divide-y divide-zinc-700">
+                                  {(memberPaymentsById[m.member_id] || []).map((p) => (
+                                    <li key={p.id} className="p-3 text-sm">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="text-white font-medium">${Number(p.amount || 0).toFixed(2)}</p>
+                                        <div className="flex items-center gap-2">
+                                          <p className="text-zinc-500">
+                                            {p.paid_date || (p.created_at ? new Date(p.created_at).toLocaleDateString() : '—')}
+                                          </p>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeletePayment(m.member_id, p.id)}
+                                            disabled={deletingPaymentId === p.id}
+                                            className="text-zinc-500 hover:text-red-400 disabled:opacity-50"
+                                            title="Delete payment"
+                                          >
+                                            {deletingPaymentId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 size={13} />}
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <p className="text-zinc-400 text-xs mt-1">
+                                        {(p.payment_method || 'other').toUpperCase()}
+                                        {p.plan_name ? ` • ${p.plan_name}` : ''}
+                                        {p.notes ? ` • ${p.notes}` : ''}
+                                      </p>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -1496,44 +1900,99 @@ function SettingsDues({ orgId }: { orgId: string }) {
                 <Input value={planName} onChange={(e) => setPlanName(e.target.value)} placeholder="e.g., Fall Dues" required className="mt-1 bg-zinc-800 border-zinc-700" />
               </div>
               <div>
-                <Label className="text-zinc-300">Installment amount ($)</Label>
-                <p className="text-xs text-zinc-500 mt-0.5">Minimum payment (e.g. $100/month)</p>
-                <Input type="number" step="0.01" min="0" value={planAmount} onChange={(e) => setPlanAmount(e.target.value)} placeholder="0.00" required className="mt-1 bg-zinc-800 border-zinc-700" />
+                <Label className="text-zinc-300 block mb-2">Plan type</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPlanMode('installment')}
+                    className={cn(
+                      'rounded-lg border p-3 text-left',
+                      planMode === 'installment' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-zinc-900 text-zinc-300',
+                    )}
+                  >
+                    <p className="text-sm font-medium">Installments</p>
+                    <p className="text-xs text-zinc-400">Set total + months</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlanMode('full')}
+                    className={cn(
+                      'rounded-lg border p-3 text-left',
+                      planMode === 'full' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-zinc-900 text-zinc-300',
+                    )}
+                  >
+                    <p className="text-sm font-medium">Full payment</p>
+                    <p className="text-xs text-zinc-400">Single amount due</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlanMode('custom')}
+                    className={cn(
+                      'rounded-lg border p-3 text-left',
+                      planMode === 'custom' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-zinc-900 text-zinc-300',
+                    )}
+                  >
+                    <p className="text-sm font-medium">Custom payments</p>
+                    <p className="text-xs text-zinc-400">Minimum + optional total</p>
+                  </button>
+                </div>
               </div>
-              <div>
-                <Label className="text-zinc-300">Total amount ($) – optional</Label>
-                <p className="text-xs text-zinc-500 mt-0.5">Full amount for &quot;Paid in full&quot; (e.g. $1200/year). If omitted, installment amount is used.</p>
-                <Input type="number" step="0.01" min="0" value={planTotalAmount} onChange={(e) => setPlanTotalAmount(e.target.value)} placeholder="e.g. 1200" className="mt-1 bg-zinc-800 border-zinc-700" />
-              </div>
+              {planMode === 'installment' ? (
+                <>
+                  <div>
+                    <Label className="text-zinc-300">Total amount ($)</Label>
+                    <Input type="number" step="0.01" min="0" value={planTotalAmount} onChange={(e) => setPlanTotalAmount(e.target.value)} placeholder="e.g. 1000" className="mt-1 bg-zinc-800 border-zinc-700" required />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">Installment months</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={planInstallmentMonths}
+                      onChange={(e) => setPlanInstallmentMonths(e.target.value)}
+                      placeholder="e.g. 10 or 12 (optional if due date is set)"
+                      className="mt-1 bg-zinc-800 border-zinc-700"
+                    />
+                  </div>
+                  {previewInstallmentMonths && planTotalAmount.trim() ? (
+                    <div className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300">
+                      Monthly installment: <span className="text-white font-medium">${(Number(planTotalAmount) / previewInstallmentMonths).toFixed(2)}</span>
+                      {!planInstallmentMonths.trim() && autoPlanMonths ? (
+                        <span className="ml-2 text-zinc-400">
+                          ({autoPlanMonths} months auto-calculated from due date)
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {!planInstallmentMonths.trim() ? (
+                    <p className="text-xs text-zinc-500">
+                      If left blank, months auto-calculate from your due date.
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+              {planMode === 'full' ? (
+                <div>
+                  <Label className="text-zinc-300">Amount due ($)</Label>
+                  <Input type="number" step="0.01" min="0" value={planAmount} onChange={(e) => setPlanAmount(e.target.value)} placeholder="e.g. 500" required className="mt-1 bg-zinc-800 border-zinc-700" />
+                </div>
+              ) : null}
+              {planMode === 'custom' ? (
+                <>
+                  <div>
+                    <Label className="text-zinc-300">Minimum payment ($)</Label>
+                    <Input type="number" step="0.01" min="0" value={planAmount} onChange={(e) => setPlanAmount(e.target.value)} placeholder="e.g. 100" required className="mt-1 bg-zinc-800 border-zinc-700" />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">Total amount ($) - optional</Label>
+                    <Input type="number" step="0.01" min="0" value={planTotalAmount} onChange={(e) => setPlanTotalAmount(e.target.value)} placeholder="e.g. 1200" className="mt-1 bg-zinc-800 border-zinc-700" />
+                  </div>
+                </>
+              ) : null}
               <div>
                 <Label className="text-zinc-300">Due Date (optional)</Label>
                 <Input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} className="mt-1 bg-zinc-800 border-zinc-700" />
-              </div>
-              <div>
-                <Label className="text-zinc-300 block mb-2">Payment options</Label>
-                <p className="text-xs text-zinc-500 mb-2">Members see one button only: either pay full amount or pay a custom amount.</p>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="planPaymentOption"
-                      checked={planPaymentOption === 'full_only'}
-                      onChange={() => setPlanPaymentOption('full_only')}
-                      className="rounded-full border-zinc-600 bg-zinc-800 text-white focus:ring-white"
-                    />
-                    <span className="text-zinc-300">Full payment only</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="planPaymentOption"
-                      checked={planPaymentOption === 'custom_only'}
-                      onChange={() => setPlanPaymentOption('custom_only')}
-                      className="rounded-full border-zinc-600 bg-zinc-800 text-white focus:ring-white"
-                    />
-                    <span className="text-zinc-300">Custom payment only</span>
-                  </label>
-                </div>
               </div>
               <div className="flex gap-2 pt-4">
                 <Button type="button" variant="outline" onClick={closePlanModal} className="flex-1 bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700">Cancel</Button>
@@ -2083,6 +2542,7 @@ interface AttendeeOption {
 }
 
 const QR_SCANNER_DIV_ID = 'event-options-qr-scanner'
+type QrScannerInstance = { stop: () => Promise<void> }
 
 function SettingsEventOptions({ orgId }: { orgId: string }) {
   const [events, setEvents] = useState<EventOption[]>([])
@@ -2097,7 +2557,7 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
   const [refundReason, setRefundReason] = useState('')
   const [processingRefund, setProcessingRefund] = useState(false)
   const [scanModalOpen, setScanModalOpen] = useState(false)
-  const qrScannerRef = useRef<InstanceType<typeof Html5Qrcode> | null>(null)
+  const qrScannerRef = useRef<QrScannerInstance | null>(null)
 
   const paidEvents = events.filter((e) => e.is_paid && (e.price ?? 0) > 0).sort((a, b) => {
     const da = a.start_time ? new Date(a.start_time).getTime() : 0
@@ -2149,32 +2609,43 @@ function SettingsEventOptions({ orgId }: { orgId: string }) {
   useEffect(() => {
     if (!scanModalOpen || !selectedEvent) return
     let cancelled = false
-    const scanner = new Html5Qrcode(QR_SCANNER_DIV_ID)
-    qrScannerRef.current = scanner
-    const onSuccess = (decodedText: string) => {
-      const tid = decodedText.trim()
-      if (!tid) return
-      handleCheckIn(tid)
-      scanner.stop().then(() => {
+    let scanner: QrScannerInstance | null = null
+    const startScanner = async () => {
+      try {
+        const { Html5Qrcode } = await import('html5-qrcode')
+        if (cancelled) return
+        const nextScanner = new Html5Qrcode(QR_SCANNER_DIV_ID) as QrScannerInstance
+        scanner = nextScanner
+        qrScannerRef.current = nextScanner
+        const onSuccess = (decodedText: string) => {
+          const tid = decodedText.trim()
+          if (!tid) return
+          handleCheckIn(tid)
+          nextScanner.stop().then(() => {
+            qrScannerRef.current = null
+            setScanModalOpen(false)
+          }).catch(() => {
+            qrScannerRef.current = null
+            setScanModalOpen(false)
+          })
+        }
+        await (nextScanner as any).start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          onSuccess,
+          () => {}
+        )
+      } catch {
+        if (!cancelled) setScanModalOpen(false)
         qrScannerRef.current = null
-        setScanModalOpen(false)
-      }).catch(() => {
-        qrScannerRef.current = null
-        setScanModalOpen(false)
-      })
+      }
     }
-    scanner.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 220, height: 220 } },
-      onSuccess,
-      () => {}
-    ).catch(() => {
-      if (!cancelled) setScanModalOpen(false)
-      qrScannerRef.current = null
-    })
+    startScanner()
     return () => {
       cancelled = true
-      qrScannerRef.current?.stop().then(() => { qrScannerRef.current = null }).catch(() => { qrScannerRef.current = null })
+      ;(scanner || qrScannerRef.current)?.stop()
+        .then(() => { qrScannerRef.current = null })
+        .catch(() => { qrScannerRef.current = null })
     }
   }, [scanModalOpen, selectedEvent?.id])
 
@@ -2867,7 +3338,9 @@ function SettingsMyTickets({ orgId }: { orgId: string }) {
               {qrTicket.qr_code ? (
                 <img src={qrTicket.qr_code} alt="Ticket QR Code" className="w-48 h-48 object-contain" />
               ) : (
-                <QRCode value={qrTicket.ticket_id} size={192} level="H" />
+                <Suspense fallback={<div className="w-48 h-48 bg-zinc-100 animate-pulse rounded" />}>
+                  <LazyQRCode value={qrTicket.ticket_id} size={192} level="H" />
+                </Suspense>
               )}
             </div>
             {qrTicket.short_code ? (

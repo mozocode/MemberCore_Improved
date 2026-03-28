@@ -36,6 +36,22 @@ export default function AdminOverview() {
     clubs?: { total?: number; last_7_days?: number }
     events?: { total?: number }
     paid_payments_30d?: { count?: number; amount?: number }
+    platform_volume_30d?: {
+      count?: number
+      amount?: number
+      dues_count?: number
+      dues_amount?: number
+      tickets_count?: number
+      tickets_amount?: number
+    }
+    platform_volume_all_time?: {
+      count?: number
+      amount?: number
+      dues_count?: number
+      dues_amount?: number
+      tickets_count?: number
+      tickets_amount?: number
+    }
     pro_churn_30d?: number | null
     pro_churn_90d?: number | null
   } | null>(null)
@@ -87,6 +103,16 @@ export default function AdminOverview() {
           />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <StatCard
+            label="Platform Volume (30d)"
+            value={`${stats?.platform_volume_30d?.count ?? 0} / $${(stats?.platform_volume_30d?.amount ?? 0).toFixed(2)}`}
+            subtitle={`dues $${(stats?.platform_volume_30d?.dues_amount ?? 0).toFixed(2)} • tickets $${(stats?.platform_volume_30d?.tickets_amount ?? 0).toFixed(2)}`}
+          />
+          <StatCard
+            label="Platform Volume (All time)"
+            value={`${stats?.platform_volume_all_time?.count ?? 0} / $${(stats?.platform_volume_all_time?.amount ?? 0).toFixed(2)}`}
+            subtitle={`dues $${(stats?.platform_volume_all_time?.dues_amount ?? 0).toFixed(2)} • tickets $${(stats?.platform_volume_all_time?.tickets_amount ?? 0).toFixed(2)}`}
+          />
           <StatCard label="Pro Churn (30d)" value={stats?.pro_churn_30d ?? '—'} />
           <StatCard label="Pro Churn (90d)" value={stats?.pro_churn_90d ?? '—'} />
           <StatCard

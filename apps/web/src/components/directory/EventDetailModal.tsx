@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { X, Calendar, MapPin, Users, Share2, ExternalLink } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { api } from '@/lib/api'
+import { normalizeOrgTypeLabel } from '@/lib/orgTypeDisplay'
 import { PublicRsvpSection } from './PublicRsvpSection'
 import { PublicTicketSection } from './PublicTicketSection'
 
@@ -162,7 +163,7 @@ export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
               <div>
                 <p className="text-white font-medium">{event.organization.name}</p>
                 {event.organization.type && (
-                  <p className="text-sm text-zinc-400">{event.organization.type}</p>
+                  <p className="text-sm text-zinc-400">{normalizeOrgTypeLabel(event.organization.type)}</p>
                 )}
               </div>
             </div>

@@ -18,6 +18,7 @@ export interface Org {
 interface OrganizationSidebarProps {
   org: Org
   role: OrgRole
+  billingActive?: boolean
   unreadChatCount?: number
   unreadMessagesCount?: number
   onClose?: () => void
@@ -39,6 +40,7 @@ function getActiveSection(pathname: string): string {
 export function OrganizationSidebar({
   org,
   role,
+  billingActive = true,
   unreadChatCount = 0,
   unreadMessagesCount = 0,
   onClose,
@@ -66,6 +68,10 @@ export function OrganizationSidebar({
   const menuItems = getSidebarMenuItems(org.id, duesLabel)
 
   const visibleItems = menuItems.filter((item) => {
+    if (!billingActive) {
+      const allowedWhileInactive = new Set(['calendar', 'directory', 'settings'])
+      if (!allowedWhileInactive.has(item.id)) return false
+    }
     if (role === 'restricted' && item.id === 'messages') return false
     if (!item.alwaysVisible && org.menu_hidden_pages?.includes(item.id)) return false
     if (!hasPermission(role, item.permission)) return false
@@ -73,7 +79,11 @@ export function OrganizationSidebar({
   })
 
   const handleNav = (path: string) => {
-    navigate(path)
+    if (path.includes('/chat')) {
+      navigate(path, { state: { forceLatestChatAt: Date.now() } })
+    } else {
+      navigate(path)
+    }
     onClose?.()
   }
 

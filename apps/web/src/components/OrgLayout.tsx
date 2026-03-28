@@ -60,8 +60,32 @@ interface OrgLayoutOrg {
   is_pro?: boolean
   platform_admin_owned?: boolean
   billing_exempt?: boolean
+  billing_status?: string
   trial_start_date?: string | { _seconds: number }
   trial_end_date?: string | { _seconds: number }
+}
+
+function isBillingActiveForOrg(org: OrgLayoutOrg): boolean {
+  if (org.is_pro || org.platform_admin_owned || org.billing_exempt) return true
+  const status = String(org.billing_status || '').toLowerCase()
+  if (status === 'active' || status === 'trial' || status === 'exempt') return true
+  // Backward-compatible fallback: orgs without explicit billing_status are in trial
+  // as long as trial_start_date/trial_end_date indicates the 30-day window is active.
+  const trialEnd = getTrialEnd(org)
+  return trialEnd !== null && trialEnd.getTime() > Date.now()
+}
+
+function isPathAllowedWhileInactive(pathname: string): boolean {
+  if (pathname.includes('/calendar')) return true
+  if (pathname.includes('/directory')) return true
+  if (pathname.includes('/settings')) {
+    if (pathname.includes('/settings/personal')) return true
+    if (pathname.includes('/settings/my-tickets')) return true
+    if (!pathname.includes('/settings/')) return true // settings index view
+    return false
+  }
+  // Keep org home accessible so admins can still see billing/trial notice.
+  return /^\/org\/[^/]+$/.test(pathname)
 }
 
 export function OrgLayout() {
@@ -156,6 +180,18 @@ export function OrgLayout() {
     setMobileMenuOpen(false)
   }, [location.pathname])
 
+  useEffect(() => {
+    if (!orgId || !org) return
+    const billingActive = isBillingActiveForOrg(org)
+    if (billingActive) return
+    if (isPathAllowedWhileInactive(location.pathname)) return
+    if (location.pathname.includes('/settings/')) {
+      navigate(`/org/${orgId}/settings/personal`, { replace: true })
+      return
+    }
+    navigate(`/org/${orgId}/calendar`, { replace: true })
+  }, [orgId, org, location.pathname, navigate])
+
   // Prevent body scroll so header and chat stay fixed; no page-level scroll on mobile
   useEffect(() => {
     document.body.style.overflow = 'hidden'
@@ -178,6 +214,7 @@ export function OrgLayout() {
 
   const currentPageTitle = getPageTitle(location.pathname, org.name)
   const isChatPage = location.pathname.includes('/chat')
+  const billingActive = isBillingActiveForOrg(org)
 
   // Feedback modals: for org owners and admins, one-time per org
   const isOwnerOrAdmin = role === 'owner' || role === 'admin'
@@ -212,6 +249,7 @@ export function OrgLayout() {
         <OrganizationSidebar
           org={org}
           role={role}
+          billingActive={billingActive}
           unreadChatCount={unreadChatCount}
           unreadMessagesCount={unreadMessagesCount}
         />
@@ -238,6 +276,7 @@ export function OrgLayout() {
         <OrganizationSidebar
           org={org}
           role={role}
+          billingActive={billingActive}
           unreadChatCount={unreadChatCount}
           unreadMessagesCount={unreadMessagesCount}
           onClose={() => setMobileMenuOpen(false)}

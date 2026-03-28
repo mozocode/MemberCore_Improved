@@ -22,7 +22,8 @@ interface DuesPlan {
   total_amount?: number
   due_date?: string
   frequency: string
-  payment_option?: 'full_only' | 'custom_only'
+  payment_option?: 'full_only' | 'custom_only' | 'installment_only'
+  installment_months?: number
 }
 
 interface Payment {
@@ -150,6 +151,10 @@ export function OrgDues() {
 
   const planTotal = (p: DuesPlan) => (p.total_amount != null ? p.total_amount : p.amount) || 0
   const totalRequired = status?.plans?.reduce((s, p) => s + planTotal(p), 0) ?? 0
+  const displayRemaining =
+    status?.status === 'paid_in_full'
+      ? 0
+      : Math.max(0, totalRequired - (status?.total_paid ?? 0))
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -186,7 +191,7 @@ export function OrgDues() {
                 Remaining
               </div>
               <div className="text-2xl font-semibold text-white">
-                ${Math.max(0, totalRequired - (status?.total_paid ?? 0)).toFixed(2)}
+                ${displayRemaining.toFixed(2)}
               </div>
             </div>
             <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-4">
@@ -205,7 +210,7 @@ export function OrgDues() {
                 )}
               >
                 {status?.status === 'paid_in_full'
-                  ? 'Paid in full'
+                  ? 'Paid In Full'
                   : status?.status === 'paid'
                     ? 'Paid'
                     : status?.status === 'partial'
@@ -239,7 +244,9 @@ export function OrgDues() {
                         <div className="min-w-0">
                           <span className="font-medium text-white">{plan.name}</span>
                           <p className="text-sm text-zinc-500">
-                            ${plan.amount.toFixed(2)} installment{plan.total_amount != null ? ` • $${plan.total_amount.toFixed(2)} total` : ''}
+                            ${plan.amount.toFixed(2)} installment
+                            {plan.installment_months ? ` x ${plan.installment_months} months` : ''}
+                            {plan.total_amount != null ? ` • $${plan.total_amount.toFixed(2)} total` : ''}
                             {plan.due_date && ` • Due ${new Date(plan.due_date).toLocaleDateString()}`}
                           </p>
                           {!isPaid && (
@@ -268,6 +275,18 @@ export function OrgDues() {
                           >
                             <CreditCard size={16} className="shrink-0" />
                             <span className="ml-1">Pay Custom Amount (${plan.amount.toFixed(2)} minimum)</span>
+                          </Button>
+                        ) : plan.payment_option === 'installment_only' ? (
+                          <Button
+                            size="sm"
+                            onClick={() => handlePayPlan(plan.id, Math.min(plan.amount, remaining))}
+                            disabled={payingPlanId === plan.id}
+                            className="w-full sm:w-auto bg-white text-black hover:bg-zinc-200"
+                          >
+                            {payingPlanId === plan.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard size={16} />}
+                            <span className="ml-1">
+                              Pay installment (${Math.min(plan.amount, remaining).toFixed(2)})
+                            </span>
                           </Button>
                         ) : (
                           <Button
@@ -304,7 +323,7 @@ export function OrgDues() {
                   <div key={p.id} className="flex items-center justify-between p-3 rounded-lg bg-zinc-900 border border-zinc-700">
                     <div>
                       <span className="text-white font-medium">${p.amount.toFixed(2)}</span>
-                      <span className="text-zinc-500 text-sm ml-2">via {p.payment_method === 'stripe' ? 'Card' : p.payment_method}</span>
+                      <span className="text-zinc-500 text-sm ml-2">via {p.payment_method === 'stripe' ? 'Stripe' : p.payment_method}</span>
                     </div>
                     <span className="text-zinc-500 text-sm">{p.created_at ? new Date(p.created_at).toLocaleDateString() : ''}</span>
                   </div>

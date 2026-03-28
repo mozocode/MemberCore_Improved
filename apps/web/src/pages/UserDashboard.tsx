@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/contexts/AuthContext'
 import { api } from '@/lib/api'
+import { normalizeOrgTypeLabel } from '@/lib/orgTypeDisplay'
 import { Plus, Users, LogOut, MoreVertical, UserPlus, Building2, Shield } from 'lucide-react'
 
 interface Organization {
@@ -179,7 +180,7 @@ export function UserDashboard() {
                     )}
                     <div className="min-w-0 flex-1">
                       <CardTitle>{org.name}</CardTitle>
-                      <p className="text-sm text-zinc-400">{org.type}</p>
+                      <p className="text-sm text-zinc-400">{normalizeOrgTypeLabel(org.type)}</p>
                     </div>
                     {isPending && (
                       <p className="text-sm text-zinc-300 shrink-0">

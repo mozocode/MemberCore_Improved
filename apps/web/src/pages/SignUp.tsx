@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { GoogleLogin } from '@react-oauth/google'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/contexts/ToastContext'
 
@@ -66,9 +67,10 @@ export function SignUp() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { signup } = useAuth()
+  const { signup, signinWithGoogle } = useAuth()
   const { success, error: toastError } = useToast()
   const navigate = useNavigate()
+  const googleEnabled = !!import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -95,6 +97,40 @@ export function SignUp() {
       <div style={s.card}>
         <h1 style={s.title}>Create an account</h1>
         <p style={s.desc}>Get started with MemberCore</p>
+        {googleEnabled && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <GoogleLogin
+                onSuccess={async (credentialResponse) => {
+                  const idToken = credentialResponse.credential
+                  if (!idToken) {
+                    setError('Google signup failed. Please try again.')
+                    return
+                  }
+                  setError('')
+                  setLoading(true)
+                  try {
+                    await signinWithGoogle(idToken)
+                    success('Account ready! Welcome to MemberCore.')
+                    navigate(returnTo || '/user-dashboard')
+                  } catch (err: any) {
+                    const msg = err?.response?.data?.detail || err?.message || 'Google signup failed'
+                    setError(msg)
+                    toastError(msg)
+                  } finally {
+                    setLoading(false)
+                  }
+                }}
+                onError={() => setError('Google signup failed. Please try again.')}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+              <div style={{ height: 1, flex: 1, background: '#3f3f46' }} />
+              <span style={{ fontSize: 12, color: '#71717a', textTransform: 'uppercase', letterSpacing: 1 }}>or</span>
+              <div style={{ height: 1, flex: 1, background: '#3f3f46' }} />
+            </div>
+          </div>
+        )}
         <form onSubmit={handleSubmit}>
           {error && (
             <div style={{ background: 'rgba(239,68,68,0.2)', color: '#ef4444', padding: 12, borderRadius: 8, marginBottom: 16 }}>
