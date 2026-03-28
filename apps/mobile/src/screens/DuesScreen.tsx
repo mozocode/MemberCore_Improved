@@ -16,6 +16,29 @@ import { formatCurrency, formatDate } from '@membercore/core'
 import { duesService } from '@membercore/services'
 import type { OrgDrawerScreenProps } from '../navigation/types'
 
+/** API uses snake_case (e.g. paid_in_full); show Title Case without underscores. */
+function formatDuesStatusLabel(raw: string | undefined): string {
+  const key = (raw || 'none').toLowerCase()
+  switch (key) {
+    case 'paid_in_full':
+      return 'Paid In Full'
+    case 'paid':
+      return 'Paid'
+    case 'partial':
+      return 'Partial'
+    case 'pending':
+      return 'Pending'
+    case 'none':
+      return 'No Dues'
+    default:
+      if (!raw) return 'Pending'
+      return raw
+        .split('_')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ')
+  }
+}
+
 export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
   const { orgId } = route.params
   const [status, setStatus] = useState<DuesStatus | null>(null)
@@ -84,10 +107,12 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
     (sum, p) => sum + (p.total_amount || p.amount),
     0,
   )
-  const totalRemaining = Math.max(0, totalRequired - status.total_paid)
-  const isPaid = status.status === 'paid'
-  const statusLabel =
-    (status.status || 'Pending').charAt(0).toUpperCase() + (status.status || 'pending').slice(1)
+  const paidInFull = status.status === 'paid_in_full'
+  const totalRemaining = paidInFull
+    ? 0
+    : Math.max(0, totalRequired - status.total_paid)
+  const isPaid = status.status === 'paid' || paidInFull
+  const statusLabel = formatDuesStatusLabel(status.status)
 
   return (
     <View style={styles.container}>
@@ -148,9 +173,12 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
             </View>
             <Text
               style={[
-                styles.summaryValue,
+                styles.summaryStatusValue,
                 { color: isPaid ? '#22c55e' : '#f59e0b' },
               ]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.72}
             >
               {statusLabel}
             </Text>
@@ -165,7 +193,9 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
 
         {status.plans.map((plan) => {
           const total = plan.total_amount || plan.amount
-          const remaining = Math.max(0, total - (status.total_paid || 0))
+          const remaining = paidInFull
+            ? 0
+            : Math.max(0, total - (status.total_paid || 0))
           return (
             <View key={plan.id} style={styles.planCard}>
               <View style={styles.planHeader}>
@@ -220,7 +250,7 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
                     {formatCurrency(p.amount)}
                   </Text>
                   <Text style={styles.historyMethod}>
-                    via {p.payment_method || 'Card'}
+                    via {p.payment_method === 'stripe' ? 'Stripe' : (p.payment_method || 'Stripe')}
                   </Text>
                 </View>
                 <Text style={styles.historyDate}>
@@ -286,6 +316,11 @@ const styles = StyleSheet.create({
   summaryValue: {
     color: '#ffffff',
     fontSize: 24,
+    fontWeight: '600',
+  },
+  /** Status chip: smaller so labels like "Paid In Full" stay on one line in the 2-column grid. */
+  summaryStatusValue: {
+    fontSize: 15,
     fontWeight: '600',
   },
 

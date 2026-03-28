@@ -47,6 +47,13 @@ const ORG_TYPES = ['All', 'Fraternity', 'Sorority', 'Club', 'Organization', 'Spo
 const CULTURAL_IDENTITIES = ['All', 'African American', 'Asian', 'Hispanic/Latino', 'Native American', 'Pacific Islander', 'Multi-Cultural', 'Other']
 const SPORT_TYPES = ['All', 'Basketball', 'Football', 'Soccer', 'Baseball', 'Volleyball', 'Tennis', 'Track & Field', 'Swimming', 'Other']
 
+function normalizeOrgTypeLabel(type?: string) {
+  const raw = (type || '').trim()
+  if (!raw) return ''
+  if (raw === 'Trade Union / Guild') return 'Union / Guild'
+  return raw
+}
+
 export function DirectoryScreen({ route, navigation }: OrgDrawerScreenProps<'Directory'>) {
   const { orgId } = route.params
   const [events, setEvents] = useState<DirectoryEvent[]>([])
@@ -277,7 +284,7 @@ export function DirectoryScreen({ route, navigation }: OrgDrawerScreenProps<'Dir
                     )}
                     <Text style={styles.orgName} numberOfLines={1}>
                       {item.organization?.name || ''}
-                      {item.organization?.type ? <Text style={styles.orgType}> · {item.organization.type}</Text> : null}
+                      {item.organization?.type ? <Text style={styles.orgType}> · {normalizeOrgTypeLabel(item.organization.type)}</Text> : null}
                     </Text>
                   </View>
                 )}
@@ -315,7 +322,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  filterHeaderBtn: { padding: 8, marginRight: 4, flexDirection: 'row', alignItems: 'center' },
+  filterHeaderBtn: {
+    width: 46,
+    height: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   filterBadge: {
     position: 'absolute', top: 2, right: 2,
     backgroundColor: '#3b82f6', borderRadius: 8, minWidth: 16, height: 16,

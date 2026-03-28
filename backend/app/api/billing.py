@@ -14,7 +14,7 @@ Stripe events we handle:
 
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
@@ -130,6 +130,15 @@ def _get_stripe():
     return stripe
 
 
+def _stripe_checkout_error_response(context: str, exc: Exception):
+    """Log full Stripe error internally, return sanitized user-safe message."""
+    logger.error("%s: %s", context, exc)
+    raise HTTPException(
+        status_code=500,
+        detail="Could not start Stripe checkout. Please verify billing configuration and try again.",
+    )
+
+
 def _require_org_owner_or_admin(db, org_id: str, user_id: str):
     """Return member doc if user is owner/admin of org; raise otherwise."""
     members = list(
@@ -202,17 +211,86 @@ def get_billing_state(
 
     is_pro = d.get("is_pro", False)
     billing_status = d.get("billing_status", "inactive")
+    trial_end_date = d.get("trial_end_date")
+    trial_start_date = d.get("trial_start_date")
+    pending_updates = {}
     if d.get("platform_admin_owned") or d.get("billing_exempt"):
         billing_status = "exempt"
+        if d.get("billing_status") != "exempt":
+            pending_updates["billing_status"] = "exempt"
+        if not d.get("billing_exempt"):
+            pending_updates["billing_exempt"] = True
+    elif not is_pro:
+        # Backward-compatible fallback for orgs created before explicit billing_status
+        # initialization: active trial is determined per-organization from trial dates.
+        def _to_dt(val):
+            if val is None:
+                return None
+            if isinstance(val, datetime):
+                return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+            if isinstance(val, str):
+                try:
+                    dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    return None
+            if isinstance(val, dict) and "_seconds" in val:
+                try:
+                    return datetime.fromtimestamp(float(val["_seconds"]), tz=timezone.utc)
+                except Exception:
+                    return None
+            return None
+
+        trial_end_dt = _to_dt(trial_end_date)
+        trial_start_dt = _to_dt(trial_start_date)
+        if trial_start_dt is None:
+            trial_start_dt = _to_dt(d.get("created_at"))
+            if trial_start_dt is not None:
+                trial_start_date = trial_start_dt
+                pending_updates["trial_start_date"] = trial_start_dt
+        if trial_end_dt is None:
+            if trial_start_dt is not None:
+                trial_end_dt = trial_start_dt + timedelta(days=30)
+                trial_end_date = trial_end_dt
+                pending_updates["trial_end_date"] = trial_end_dt
+        status_norm = str(d.get("billing_status") or "").strip().lower()
+        has_stripe_history = bool(d.get("stripe_subscription_id") or d.get("stripe_customer_id"))
+        if trial_end_dt is not None and trial_end_dt > datetime.now(timezone.utc):
+            if not status_norm or (status_norm == "inactive" and not has_stripe_history):
+                billing_status = "trial"
+                if status_norm != "trial":
+                    pending_updates["billing_status"] = "trial"
+        elif not status_norm:
+            billing_status = "inactive"
+            pending_updates["billing_status"] = "inactive"
+    elif is_pro and not d.get("billing_status"):
+        billing_status = "active"
+        pending_updates["billing_status"] = "active"
+
+    if pending_updates:
+        _sync_billing_to_org(db, org_id, pending_updates)
 
     billing_plan = d.get("billing_plan")  # 'pro_monthly' | 'pro_annual' when Pro
+    stripe_connected_account_id = d.get("stripe_connected_account_id")
+    stripe_connect_charges_enabled = bool(d.get("stripe_connect_charges_enabled"))
+    stripe_connect_payouts_enabled = bool(d.get("stripe_connect_payouts_enabled"))
+    stripe_connect_ready = bool(
+        stripe_connected_account_id
+        and stripe_connect_charges_enabled
+        and stripe_connect_payouts_enabled
+    )
     return {
         "plan": "pro" if is_pro else "free",
         "billing_plan": billing_plan if is_pro else None,
         "billing_status": billing_status,
-        "trial_end_date": d.get("trial_end_date"),
+        "trial_end_date": trial_end_date,
         "period_end": d.get("period_end"),
         "stripe_customer_id": d.get("stripe_customer_id"),
+        "stripe_connected_account_id": stripe_connected_account_id,
+        "stripe_connect_onboarded": bool(d.get("stripe_connect_onboarded")),
+        "stripe_connect_charges_enabled": stripe_connect_charges_enabled,
+        "stripe_connect_payouts_enabled": stripe_connect_payouts_enabled,
+        "stripe_connect_ready": stripe_connect_ready,
         "is_billing_exempt": bool(d.get("platform_admin_owned") or d.get("billing_exempt")),
     }
 
@@ -231,6 +309,118 @@ class CreateCheckoutRequest(BaseModel):
 class CreateCheckoutSessionRequest(BaseModel):
     """Used by mobile (and optionally web) to start checkout without passing URLs."""
     plan: str  # 'pro_monthly' | 'pro_annual'
+
+
+class ConnectOnboardingRequest(BaseModel):
+    refresh_url: str
+    return_url: str
+
+
+class ConnectLoginLinkRequest(BaseModel):
+    redirect_url: Optional[str] = None
+
+
+def _upsert_connect_state(db, org_id: str, account) -> dict:
+    """Persist Stripe Connect account status fields on the organization."""
+    data = {
+        "stripe_connected_account_id": account.id,
+        "stripe_connect_onboarded": bool(getattr(account, "details_submitted", False)),
+        "stripe_connect_charges_enabled": bool(getattr(account, "charges_enabled", False)),
+        "stripe_connect_payouts_enabled": bool(getattr(account, "payouts_enabled", False)),
+        "stripe_connect_updated_at": datetime.now(timezone.utc),
+    }
+    db.collection("organizations").document(org_id).update(data)
+    return data
+
+
+@router.post("/{org_id}/billing/connect/onboarding")
+def create_connect_onboarding_link(
+    org_id: str,
+    req: ConnectOnboardingRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Create/reuse Stripe Express account and return onboarding link for org payouts."""
+    db = get_firestore()
+    _require_org_owner_or_admin(db, org_id, user["id"])
+
+    org_doc = db.collection("organizations").document(org_id).get()
+    if not org_doc.exists:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    od = org_doc.to_dict()
+
+    stripe = _get_stripe()
+    try:
+        account_id = od.get("stripe_connected_account_id")
+        account = None
+        if account_id:
+            try:
+                account = stripe.Account.retrieve(account_id)
+            except Exception:
+                account = None
+
+        if not account:
+            account = stripe.Account.create(
+                type="express",
+                country=os.getenv("STRIPE_CONNECT_COUNTRY", "US"),
+                email=user.get("email"),
+                business_type="company",
+                metadata={"org_id": org_id, "owner_user_id": user["id"]},
+                capabilities={
+                    "card_payments": {"requested": True},
+                    "transfers": {"requested": True},
+                },
+            )
+
+        _upsert_connect_state(db, org_id, account)
+        link = stripe.AccountLink.create(
+            account=account.id,
+            refresh_url=req.refresh_url,
+            return_url=req.return_url,
+            type="account_onboarding",
+        )
+        return {"url": link.url}
+    except Exception as e:
+        logger.error("Stripe Connect onboarding error for org %s: %s", org_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not start Stripe payouts onboarding: {str(e)}",
+        )
+
+
+@router.post("/{org_id}/billing/connect/login-link")
+def create_connect_login_link(
+    org_id: str,
+    req: ConnectLoginLinkRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Create Stripe Express dashboard login link for connected org account."""
+    db = get_firestore()
+    _require_org_owner_or_admin(db, org_id, user["id"])
+
+    org_doc = db.collection("organizations").document(org_id).get()
+    if not org_doc.exists:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    od = org_doc.to_dict()
+    account_id = od.get("stripe_connected_account_id")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Stripe payouts are not connected for this organization")
+
+    stripe = _get_stripe()
+    try:
+        account = stripe.Account.retrieve(account_id)
+        _upsert_connect_state(db, org_id, account)
+
+        params = {"account": account_id}
+        if req.redirect_url:
+            params["redirect_url"] = req.redirect_url
+        link = stripe.Account.create_login_link(**params)
+        return {"url": link.url}
+    except Exception as e:
+        logger.error("Stripe Connect login-link error for org %s: %s", org_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not open Stripe payouts dashboard: {str(e)}",
+        )
 
 
 @router.post("/{org_id}/billing/create-checkout-session")
@@ -293,8 +483,7 @@ def create_checkout_session(
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:
-        logger.error("Stripe checkout session error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        _stripe_checkout_error_response("Stripe checkout session error", e)
 
 
 @router.post("/{org_id}/billing/checkout")
@@ -349,8 +538,7 @@ def create_subscription_checkout(
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:
-        logger.error("Stripe checkout error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        _stripe_checkout_error_response("Stripe checkout error", e)
 
 
 @router.post("/{org_id}/billing/portal")
@@ -384,7 +572,7 @@ def create_billing_portal(
         return {"portal_url": session.url}
     except Exception as e:
         logger.error("Stripe portal error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Could not open billing portal. Please try again.")
 
 
 # ---------------------------------------------------------------------------

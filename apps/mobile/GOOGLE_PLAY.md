@@ -50,14 +50,17 @@ For EAS to upload to Google Play, you need a **Google Cloud service account** wi
    - Invite the service account email and give at least **Release to production, exclude devices, and use Play App Signing** (or the permissions you need).  
    - Accept the invite in the service account’s email if required.
 
-4. **Put the key in the project**  
-   Save the JSON key as:
+4. **Put the key where EAS can find it**  
+   Either:
 
-   ```
-   apps/mobile/google-service-account.json
-   ```
+   - Save the JSON key as **`apps/mobile/google-service-account.json`** (this path is in `.gitignore`), or  
+   - Keep it anywhere and set the path when submitting:
+     ```bash
+     export GOOGLE_SERVICE_ACCOUNT_KEY_PATH=/path/to/your-downloaded-key.json
+     npm run submit:play
+     ```
 
-   **Important:** Add `google-service-account.json` to `.gitignore` so the key is never committed.
+   **Important:** Never commit the key file. It is already listed in `.gitignore`.
 
 5. **eas.json**  
    Your `submit.production.android` already points to it:

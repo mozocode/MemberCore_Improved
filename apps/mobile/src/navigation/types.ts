@@ -37,6 +37,7 @@ export type AuthStackParamList = {
   Home: undefined
   SignIn: undefined
   SignUp: undefined
+  ForgotPassword: undefined
   WildApricotCompare: undefined
   Nonprofits: undefined
   SportsClubs: undefined

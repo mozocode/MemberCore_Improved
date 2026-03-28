@@ -17,7 +17,7 @@ const COLORS = {
   background: '#0A0A0F',
   card: '#12121A',
   border: 'rgba(255,255,255,0.08)',
-  accent: '#14B8A6',
+  accent: '#F59E0B',
   text: '#FAFAFA',
   muted: '#A1A1AA',
   destructive: '#EF4444',

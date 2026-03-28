@@ -9,8 +9,8 @@ export const colors = {
   textSecondary: '#a1a1aa',
   textMuted: '#71717a',
 
-  primary: '#3b82f6',
-  primaryDark: '#2563eb',
+  primary: '#f59e0b',
+  primaryDark: '#d97706',
 
   success: '#22c55e',
   warning: '#eab308',

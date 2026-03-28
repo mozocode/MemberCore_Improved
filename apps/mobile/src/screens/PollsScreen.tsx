@@ -35,15 +35,24 @@ export function PollsScreen({ route, navigation }: OrgDrawerScreenProps<'Polls'>
 
   useEffect(() => {
     navigation.setOptions({
-      headerRight: isAdmin ? () => (
+      headerRight: () => (
         <TouchableOpacity
-          style={{ padding: 8, marginRight: 8 }}
-          onPress={() => Alert.alert('Create Poll', 'Poll creation is available in the web app. Open the web app to create polls.')}
+          style={styles.headerActionBtn}
+          onPress={() => {
+            if (!isAdmin) {
+              Alert.alert('Admin only', 'Only organization admins can create polls.')
+              return
+            }
+            Alert.alert(
+              'Create Poll',
+              'Poll creation is available in the web app. Open the web app to create polls.',
+            )
+          }}
           activeOpacity={0.7}
         >
-          <Feather name="plus" size={26} color="#ffffff" />
+          <Feather name="plus" size={28} color="#ffffff" />
         </TouchableOpacity>
-      ) : undefined,
+      ),
     })
   }, [navigation, isAdmin])
 
@@ -247,6 +256,12 @@ export function PollsScreen({ route, navigation }: OrgDrawerScreenProps<'Polls'>
 }
 
 const styles = StyleSheet.create({
+  headerActionBtn: {
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   container: {
     flex: 1,
     backgroundColor: '#000000',

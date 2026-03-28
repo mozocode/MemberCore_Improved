@@ -1,6 +1,5 @@
 import React, { useCallback, useState, useEffect } from 'react'
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import { createNativeStackNavigator } from '@react-navigation/native-stack'
+import { createStackNavigator } from '@react-navigation/stack'
 import { useAuth } from '../contexts/AuthContext'
 import { usePushNotifications } from '../hooks/usePushNotifications'
 import { AuthStack } from './AuthStack'
@@ -25,8 +24,12 @@ import { ActivityIndicator, View, TouchableOpacity, Text, StyleSheet } from 'rea
 import { Feather } from '@expo/vector-icons'
 import { useNavigation } from '@react-navigation/native'
 import { navigationRef } from './navigationRef'
+import { storage } from '../utils/storage'
 
-const Stack = createNativeStackNavigator<RootStackParamList>()
+const Stack = createStackNavigator<RootStackParamList>()
+const ONBOARDING_READ_TIMEOUT_MS = 3000
+const APP_BOOT_TIMEOUT_MS = 7000
+const TEMP_SKIP_ONBOARDING = true
 
 function BackButton() {
   const nav = useNavigation()
@@ -64,21 +67,32 @@ const settingsScreenOptions = {
   headerShadowVisible: false,
   headerBackTitleVisible: false,
   headerLeft: () => <BackButton />,
-  contentStyle: { backgroundColor: '#000000' },
 }
 
 export function RootNavigator() {
   const { user, loading } = useAuth()
-  const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(null)
+  const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(
+    TEMP_SKIP_ONBOARDING ? true : null,
+  )
+  const [bootTimedOut, setBootTimedOut] = useState(false)
 
   useEffect(() => {
-    AsyncStorage.getItem(ONBOARDING_SEEN_KEY).then((value) => {
+    const t = setTimeout(() => setBootTimedOut(true), APP_BOOT_TIMEOUT_MS)
+    return () => clearTimeout(t)
+  }, [])
+
+  useEffect(() => {
+    if (TEMP_SKIP_ONBOARDING) return
+    Promise.race([
+      storage.getItem(ONBOARDING_SEEN_KEY),
+      new Promise<string | null>((resolve) => setTimeout(() => resolve(null), ONBOARDING_READ_TIMEOUT_MS)),
+    ]).then((value) => {
       setHasSeenOnboarding(value === 'true')
     })
   }, [])
 
   const finishOnboarding = useCallback(() => {
-    AsyncStorage.setItem(ONBOARDING_SEEN_KEY, 'true')
+    storage.setItem(ONBOARDING_SEEN_KEY, 'true')
     setHasSeenOnboarding(true)
   }, [])
 
@@ -99,26 +113,29 @@ export function RootNavigator() {
         break
       case 'dm':
       case 'direct_message':
-        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'More', params: { orgId: org_id, screen: 'Messages', params: { orgId: org_id } } })
+        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Messages', params: { orgId: org_id } })
         break
       case 'poll':
-        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'More', params: { orgId: org_id, screen: 'Polls', params: { orgId: org_id } } })
+        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Polls', params: { orgId: org_id } })
         break
       case 'dues':
-        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'More', params: { orgId: org_id, screen: 'Dues', params: { orgId: org_id } } })
+        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Dues', params: { orgId: org_id } })
         break
       default:
-        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Home', params: { orgId: org_id } })
+        navigationRef.navigate('OrgTabs', { orgId: org_id, screen: 'Chat', params: { orgId: org_id } })
         break
     }
   }, [])
 
   usePushNotifications(user?.id, handleNotificationTap)
 
-  if (hasSeenOnboarding === null || loading) {
+  if (!bootTimedOut && (hasSeenOnboarding === null || loading)) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
         <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ color: colors.textSecondary, marginTop: 14, fontSize: 14 }}>
+          Starting MemberCore...
+        </Text>
       </View>
     )
   }
@@ -132,10 +149,9 @@ export function RootNavigator() {
       screenOptions={{
         headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.text,
-        contentStyle: { backgroundColor: colors.background },
       }}
     >
-      {!user ? (
+      {!user || (bootTimedOut && loading) ? (
         <Stack.Screen name="Auth" component={AuthStack} options={{ headerShown: false }} />
       ) : (
         <>

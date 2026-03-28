@@ -20,6 +20,8 @@ In **`backend/.env`** (create if needed), add:
 ```env
 STRIPE_SECRET_KEY=sk_test_xxxxxxxxxxxxxxxx
 FRONTEND_URL=http://localhost:5173
+# Optional: enable Cash App Pay in Stripe Checkout (dues + event tickets)
+STRIPE_ENABLE_CASHAPP_PAY=true
 ```
 
 Restart the backend. "Buy Ticket" should then create a checkout session and redirect to Stripe.
@@ -37,6 +39,7 @@ Your API runs on **Google Cloud Run** as `membercore-api`. Set the same variable
 5. Add variables:
    - **STRIPE_SECRET_KEY** = `sk_live_xxx` (or `sk_test_xxx` for testing).
    - **FRONTEND_URL** = `https://membercore.io` (no trailing slash).
+   - *(Optional)* **STRIPE_ENABLE_CASHAPP_PAY** = `true` to allow Cash App Pay in Checkout.
 6. Deploy the new revision.
 
 ### Option B: gcloud CLI
@@ -46,7 +49,7 @@ From the project root:
 ```bash
 gcloud run services update membercore-api \
   --region us-central1 \
-  --set-env-vars "STRIPE_SECRET_KEY=sk_live_xxx,FRONTEND_URL=https://membercore.io"
+  --set-env-vars "STRIPE_SECRET_KEY=sk_live_xxx,FRONTEND_URL=https://membercore.io,STRIPE_ENABLE_CASHAPP_PAY=true"
 ```
 
 Use your real secret key and your real frontend URL. For test mode, use `sk_test_xxx`.
@@ -60,9 +63,18 @@ For Stripe to create tickets after payment, Stripe must call your API:
 3. Events to send: **checkout.session.completed**.
 4. Copy the **Signing secret** (starts with `whsec_`).
 5. Add to Cloud Run env (Console or CLI):
-   - **STRIPE_WEBHOOK_SECRET** = `whsec_xxx`.
+   - **STRIPE_PAYMENTS_WEBHOOK_SECRET** = `whsec_xxx` *(preferred, event-ticket webhook only)*  
+   - or **STRIPE_WEBHOOK_SECRET** = `whsec_xxx` *(legacy fallback)*
 
-Without the webhook, payments can succeed on Stripe but tickets won’t be created in your app until you add this.
+Without the webhook, payments can succeed on Stripe but tickets will not be created in your app until you add this.
+
+## Stripe subscription webhooks (Pro billing)
+
+For Pro subscription lifecycle updates (activate, renew, cancel), use:
+
+- Endpoint URL: `https://membercore-api-XXXXX.run.app/api/billing/webhook/subscription`
+- Recommended env var: **STRIPE_SUBSCRIPTION_WEBHOOK_SECRET** = `whsec_xxx`
+- Fallback env var: **STRIPE_WEBHOOK_SECRET** = `whsec_xxx`
 
 ## Summary
 
@@ -70,6 +82,29 @@ Without the webhook, payments can succeed on Stripe but tickets won’t be creat
 |--------------------------|---------------------------|--------------------------------------------|
 | **STRIPE_SECRET_KEY**    | Yes                       | Yes                                        |
 | **FRONTEND_URL**         | Yes (redirect after pay)  | No                                          |
-| **STRIPE_WEBHOOK_SECRET**| No                        | Yes                                        |
+| **STRIPE_ENABLE_CASHAPP_PAY** | Optional (show Cash App Pay when available) | No |
+| **STRIPE_PAYMENTS_WEBHOOK_SECRET**| No              | Yes (preferred)                            |
+| **STRIPE_SUBSCRIPTION_WEBHOOK_SECRET**| No          | Yes (for Pro billing webhooks)             |
+| **STRIPE_WEBHOOK_SECRET**| No                        | Yes (legacy fallback for both endpoints)   |
 
 Set **STRIPE_SECRET_KEY** and **FRONTEND_URL** in Cloud Run to fix "Payments are not configured" in production.
+
+## Stripe Connect payouts for clubs
+
+MemberCore can route dues/event-ticket funds to each club's own Stripe account using Stripe Connect Express.
+
+- Org owners/admins open **Organization Settings -> Billing -> Club Payouts**
+- Click **Connect Stripe Payouts** and complete Stripe onboarding
+- Once connected and fully enabled (charges + payouts), new dues/ticket checkouts send funds to that connected account
+
+Implementation notes:
+- Connect account ID is stored on the organization doc (`stripe_connected_account_id`)
+- Readiness flags are stored as:
+  - `stripe_connect_onboarded`
+  - `stripe_connect_charges_enabled`
+  - `stripe_connect_payouts_enabled`
+- Optional platform fee can be configured with:
+  - `STRIPE_PLATFORM_FEE_PERCENT` (example `5` for 5%)
+- Optional strict connect mode:
+  - `STRIPE_REQUIRE_CONNECT_FOR_ORG_PAYMENTS=true`
+  - When enabled, dues/ticket checkout is blocked unless the org has a fully enabled Stripe Connect account.

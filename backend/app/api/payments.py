@@ -22,6 +22,19 @@ SHORT_CODE_CHARS = string.ascii_uppercase + string.digits
 SHORT_CODE_LENGTH = 6
 
 
+def _checkout_payment_method_types() -> list:
+    """Return Stripe Checkout payment methods for one-time payments.
+
+    Cash App Pay is opt-in via STRIPE_ENABLE_CASHAPP_PAY=true so existing flows
+    remain unchanged unless explicitly enabled.
+    """
+    methods = ["card"]
+    enable_cashapp = os.getenv("STRIPE_ENABLE_CASHAPP_PAY", "false").strip().lower()
+    if enable_cashapp in ("1", "true", "yes", "on"):
+        methods.append("cashapp")
+    return methods
+
+
 def _generate_short_code(db, org_id: str) -> str:
     """Generate a unique 6-char ticket code for this org."""
     for _ in range(10):
@@ -70,6 +83,66 @@ def _require_org_member(db, org_id: str, user_id: str):
     if not members:
         raise HTTPException(status_code=404, detail="Organization not found")
     return members[0]
+
+
+def _connected_destination_account_id(db, org_id: str) -> Optional[str]:
+    """Return org's Stripe Connect account when it is fully payout-ready."""
+    org_doc = db.collection("organizations").document(org_id).get()
+    if not org_doc.exists:
+        return None
+    od = org_doc.to_dict() or {}
+    account_id = od.get("stripe_connected_account_id")
+    if (
+        account_id
+        and od.get("stripe_connect_charges_enabled")
+        and od.get("stripe_connect_payouts_enabled")
+    ):
+        return str(account_id)
+    return None
+
+
+def _connect_strict_mode_enabled() -> bool:
+    """If enabled, org checkouts must use a connected Stripe destination."""
+    raw = os.getenv("STRIPE_REQUIRE_CONNECT_FOR_ORG_PAYMENTS", "false").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _platform_fee_amount(total_cents: int) -> Optional[int]:
+    """Optional platform fee (cents) from STRIPE_PLATFORM_FEE_PERCENT."""
+    raw = os.getenv("STRIPE_PLATFORM_FEE_PERCENT", "").strip()
+    if not raw:
+        return None
+    try:
+        pct = float(raw)
+    except ValueError:
+        return None
+    if pct <= 0:
+        return None
+    fee = int(round(total_cents * pct / 100.0))
+    return fee if fee > 0 else None
+
+
+def _payment_intent_data_for_org(db, org_id: str, total_cents: int) -> dict:
+    """Build Stripe payment_intent_data to route funds to connected account."""
+    account_id = _connected_destination_account_id(db, org_id)
+    if not account_id:
+        if _connect_strict_mode_enabled():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "This organization must connect Stripe payouts before accepting payments. "
+                    "An org admin can connect Stripe in Organization Settings > Billing > Club Payouts."
+                ),
+            )
+        return {}
+    data = {
+        "transfer_data": {"destination": account_id},
+        "on_behalf_of": account_id,
+    }
+    app_fee = _platform_fee_amount(total_cents)
+    if app_fee is not None:
+        data["application_fee_amount"] = app_fee
+    return data
 
 
 class CheckoutRequest(BaseModel):
@@ -128,11 +201,13 @@ def create_public_event_ticket_checkout(
     stripe.api_key = stripe_key
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
     price_cents = int(round(float(price) * 100))
+    total_cents = price_cents * int(req.quantity)
+    payment_intent_data = _payment_intent_data_for_org(db, org_id, total_cents)
     start_time = ev.get("start_time") or ev.get("event_date") or ""
 
     try:
         session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
+            payment_method_types=_checkout_payment_method_types(),
             mode="payment",
             line_items=[{
                 "price_data": {
@@ -158,10 +233,15 @@ def create_public_event_ticket_checkout(
                 "event_start_time": start_time.isoformat() if hasattr(start_time, "isoformat") else str(start_time),
                 "event_location": ev.get("location", ""),
                 "organization_name": org_name,
+                "funds_destination": "connected_account" if payment_intent_data else "platform",
+                "destination_account_id": (
+                    payment_intent_data.get("transfer_data", {}).get("destination") if payment_intent_data else ""
+                ),
             },
             customer_email=user.get("email"),
             success_url=f"{frontend_url}/events/{req.event_id}?payment=success&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{frontend_url}/events/{req.event_id}?payment=cancelled",
+            **({"payment_intent_data": payment_intent_data} if payment_intent_data else {}),
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:
@@ -282,11 +362,13 @@ def create_event_ticket_checkout(
     stripe.api_key = stripe_key
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
     price_cents = int(round(float(price) * 100))
+    total_cents = price_cents * int(req.quantity)
+    payment_intent_data = _payment_intent_data_for_org(db, org_id, total_cents)
     start_time = ev.get("start_time") or ev.get("event_date") or ""
 
     try:
         session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
+            payment_method_types=_checkout_payment_method_types(),
             mode="payment",
             line_items=[{
                 "price_data": {
@@ -312,10 +394,15 @@ def create_event_ticket_checkout(
                 "event_start_time": start_time.isoformat() if hasattr(start_time, "isoformat") else str(start_time),
                 "event_location": ev.get("location", ""),
                 "organization_name": org_name,
+                "funds_destination": "connected_account" if payment_intent_data else "platform",
+                "destination_account_id": (
+                    payment_intent_data.get("transfer_data", {}).get("destination") if payment_intent_data else ""
+                ),
             },
             customer_email=user.get("email"),
             success_url=f"{frontend_url}/org/{org_id}/calendar/{req.event_id}?payment=success&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{frontend_url}/org/{org_id}/calendar/{req.event_id}?payment=cancelled",
+            **({"payment_intent_data": payment_intent_data} if payment_intent_data else {}),
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:
@@ -367,7 +454,7 @@ def create_dues_checkout(
         raise HTTPException(status_code=400, detail="Already paid in full for this plan")
 
     payment_option = (pd.get("payment_option") or "full_only").strip().lower()
-    if payment_option not in ("full_only", "custom_only"):
+    if payment_option not in ("full_only", "custom_only", "installment_only"):
         payment_option = "full_only"
     effective_min = min(installment_min, remaining)
 
@@ -393,6 +480,8 @@ def create_dues_checkout(
                 detail=f"Amount cannot exceed remaining balance ${remaining:.2f}",
             )
         charge_amount = custom_amount
+    else:  # installment_only
+        charge_amount = effective_min
     if charge_amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
@@ -402,13 +491,15 @@ def create_dues_checkout(
         try:
             import stripe
             stripe.api_key = stripe_key
+            total_cents = int(round(charge_amount * 100))
+            payment_intent_data = _payment_intent_data_for_org(db, org_id, total_cents)
             session = stripe.checkout.Session.create(
-                payment_method_types=["card"],
+                payment_method_types=_checkout_payment_method_types(),
                 line_items=[{
                     "price_data": {
                         "currency": "usd",
                         "product_data": {"name": pd.get("name", "Dues")},
-                        "unit_amount": int(round(charge_amount * 100)),
+                        "unit_amount": total_cents,
                     },
                     "quantity": 1,
                 }],
@@ -420,7 +511,12 @@ def create_dues_checkout(
                     "member_id": member_id,
                     "plan_id": req.plan_id,
                     "user_id": user["id"],
+                    "funds_destination": "connected_account" if payment_intent_data else "platform",
+                    "destination_account_id": (
+                        payment_intent_data.get("transfer_data", {}).get("destination") if payment_intent_data else ""
+                    ),
                 },
+                **({"payment_intent_data": payment_intent_data} if payment_intent_data else {}),
             )
             return {"checkout_url": session.url, "session_id": session.id}
         except Exception as e:
@@ -854,7 +950,10 @@ async def stripe_webhook(request: Request):
     """Handle Stripe webhook for checkout.session.completed (event tickets). Raw body required for signature verification."""
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
-    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    webhook_secret = os.getenv("STRIPE_PAYMENTS_WEBHOOK_SECRET")
+    if not webhook_secret:
+        # Backward compatibility with existing single-secret deployments.
+        webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
     if not webhook_secret:
         return JSONResponse(content={"detail": "Webhook not configured"}, status_code=503)
 

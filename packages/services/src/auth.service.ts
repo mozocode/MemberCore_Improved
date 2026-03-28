@@ -18,6 +18,19 @@ export interface AuthResponse {
   user: User
 }
 
+export interface ForgotPasswordPayload {
+  email: string
+}
+
+export interface ResetPasswordPayload {
+  token: string
+  password: string
+}
+
+export interface GoogleAuthPayload {
+  id_token: string
+}
+
 export const authService = {
   async signin(payload: SigninPayload): Promise<AuthResponse> {
     const { data } = await getApi().post('/auth/signin', payload)
@@ -40,6 +53,21 @@ export const authService = {
 
   async getMe(): Promise<User> {
     const { data } = await getApi().get('/auth/me')
+    return data
+  },
+
+  async forgotPassword(payload: ForgotPasswordPayload): Promise<{ ok: boolean; message: string }> {
+    const { data } = await getApi().post('/auth/forgot-password', payload)
+    return data
+  },
+
+  async resetPassword(payload: ResetPasswordPayload): Promise<{ ok: boolean; message: string }> {
+    const { data } = await getApi().post('/auth/reset-password', payload)
+    return data
+  },
+
+  async googleAuth(payload: GoogleAuthPayload): Promise<AuthResponse> {
+    const { data } = await getApi().post('/auth/google', payload)
     return data
   },
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useEffect } from 'react'
 import {
   View,
   Text,
@@ -10,6 +11,8 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native'
+import * as WebBrowser from 'expo-web-browser'
+import * as Google from 'expo-auth-session/providers/google'
 import { useAuth } from '../contexts/AuthContext'
 import { colors, spacing, fontSizes, radii } from '../theme'
 
@@ -19,6 +22,13 @@ export function SignUpScreen() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const googleConfig = {
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    expoClientId: process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID,
+  }
+  const googleEnabled = !!(googleConfig.webClientId || googleConfig.iosClientId || googleConfig.androidClientId || googleConfig.expoClientId)
 
   const handleSignUp = async () => {
     if (!name.trim() || !email.trim() || !password) return
@@ -78,6 +88,8 @@ export function SignUpScreen() {
             <Text style={styles.buttonText}>Create Account</Text>
           )}
         </TouchableOpacity>
+
+        {googleEnabled ? <GoogleSignUpButton googleConfig={googleConfig} /> : null}
       </View>
     </KeyboardAvoidingView>
   )
@@ -106,4 +118,77 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: colors.white, fontSize: fontSizes.lg, fontWeight: '600' },
+  googleButton: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.md,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: spacing.md,
+  },
+  googleButtonText: { color: colors.text, fontSize: fontSizes.md, fontWeight: '600' },
 })
+
+function GoogleSignUpButton({
+  googleConfig,
+}: {
+  googleConfig: {
+    webClientId?: string
+    iosClientId?: string
+    androidClientId?: string
+    expoClientId?: string
+  }
+}) {
+  const { signupWithGoogle } = useAuth()
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest(googleConfig)
+
+  useEffect(() => {
+    WebBrowser.maybeCompleteAuthSession()
+  }, [])
+
+  useEffect(() => {
+    const handleGoogleResponse = async () => {
+      if (response?.type !== 'success') return
+      const idToken = response.params?.id_token || response.authentication?.idToken
+      if (!idToken) {
+        Alert.alert('Google Sign Up Failed', 'No Google ID token received.')
+        setGoogleLoading(false)
+        return
+      }
+      try {
+        await signupWithGoogle(idToken)
+      } catch (err: any) {
+        const detail = err?.response?.data?.detail
+        Alert.alert('Google Sign Up Failed', typeof detail === 'string' ? detail : 'Please try again.')
+      } finally {
+        setGoogleLoading(false)
+      }
+    }
+    handleGoogleResponse()
+  }, [response, signupWithGoogle])
+
+  return (
+    <TouchableOpacity
+      style={[styles.googleButton, (googleLoading || !request) && styles.buttonDisabled]}
+      onPress={async () => {
+        setGoogleLoading(true)
+        try {
+          const result = await promptAsync()
+          if (result.type !== 'success') setGoogleLoading(false)
+        } catch {
+          setGoogleLoading(false)
+          Alert.alert('Google Sign Up Failed', 'Unable to start Google sign-up.')
+        }
+      }}
+      disabled={googleLoading || !request}
+    >
+      {googleLoading ? (
+        <ActivityIndicator color={colors.text} />
+      ) : (
+        <Text style={styles.googleButtonText}>Continue with Google</Text>
+      )}
+    </TouchableOpacity>
+  )
+}

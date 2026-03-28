@@ -9,8 +9,10 @@ export interface ListMessagesResponse {
 
 export interface SendMessagePayload {
   content: string
+  image_data_url?: string
   type?: 'text' | 'event' | 'poll'
   reply_to_message_id?: string
+  reply_to_snippet?: string
   event_data?: Record<string, unknown>
   poll_data?: Record<string, unknown>
 }

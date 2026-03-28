@@ -15,7 +15,7 @@
     "build:apk": "cd apps/mobile && npx eas-cli build --profile preview --platform android",
     "build:play": "cd apps/mobile && npx eas-cli build --profile production --platform android",
     "submit:testflight": "cd apps/mobile && npx eas-cli submit --platform ios --profile testflight --latest",
-    "submit:play": "cd apps/mobile && npx eas-cli submit --platform android --profile production --latest",
+    "submit:play": "bash scripts/submit-android-play.sh",
     "expo:update": "cd apps/mobile && npx expo install --fix",
     "expo:export": "cd apps/mobile && npx expo export",
     "expo:go": "cd apps/mobile && npx expo start",
@@ -31,14 +31,8 @@
     "typescript": "~5.6.2"
   },
   "dependencies": {
-    "@react-native-async-storage/async-storage": "^2.2.0",
     "eas-cli": "^18.1.0",
-    "expo": "^54.0.33",
     "https-proxy-agent": "^7.0.6",
-    "react": "^19.1.0",
-    "react-native": "^0.81.5",
-    "react-native-gesture-handler": "^2.28.0",
-    "react-native-safe-area-context": "^5.6.0",
-    "react-native-screens": "^4.16.0"
+    "expo": "^54.0.33"
   }
 }

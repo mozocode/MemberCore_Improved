@@ -45,6 +45,7 @@ export interface Message {
   sender_nickname?: string | null
   sender_avatar?: string | null
   content: string
+  image_data_url?: string | null
   type: 'text' | 'event' | 'poll'
   created_at: string
   reply_to_message_id?: string | null

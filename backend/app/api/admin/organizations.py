@@ -41,6 +41,10 @@ class IdentityUpdate(BaseModel):
     lock_identifiers: Optional[bool] = None
 
 
+class ProGrantUpdate(BaseModel):
+    months: int
+
+
 def _activation_score(org_dict: dict, member_count: int) -> int:
     score = 0
     if member_count >= 1:
@@ -99,6 +103,56 @@ def _org_with_admin_fields(db, org_doc) -> dict:
     return d
 
 
+def _org_with_admin_list_fields(db, org_doc, owner_cache: dict[str, dict[str, str]]) -> dict:
+    """Lightweight enrich for organizations list view."""
+    d = org_doc.to_dict()
+    d["id"] = org_doc.id
+
+    owner_id = d.get("owner_id")
+    owner = owner_cache.get(owner_id or "")
+    if owner is None:
+        owner = {"owner_email": "", "owner_user_id": owner_id or ""}
+        if owner_id:
+            user_doc = db.collection("users").document(owner_id).get()
+            if user_doc.exists:
+                ud = user_doc.to_dict() or {}
+                owner = {
+                    "owner_email": ud.get("email", ""),
+                    "owner_user_id": owner_id,
+                }
+        owner_cache[owner_id or ""] = owner
+
+    d["owner_email"] = owner.get("owner_email", "")
+    d["owner_user_id"] = owner.get("owner_user_id", owner_id or "")
+
+    # Live counts (org doc may omit denormalized member_count / event_count)
+    members = list(db.collection("members").where("organization_id", "==", org_doc.id).get())
+    member_count = len(members)
+    d["member_count"] = member_count
+    d["admin_count"] = sum(1 for m in members if m.to_dict().get("role") in ("owner", "admin"))
+    d["activation_score"] = _activation_score(d, member_count)
+    events = list(db.collection("events").where("organization_id", "==", org_doc.id).get())
+    d["event_count"] = len(events)
+    last_activity = d.get("updated_at") or d.get("created_at")
+    for m in members:
+        md = m.to_dict()
+        t = md.get("joined_at") or md.get("approved_at")
+        if t and (not last_activity or (t > last_activity)):
+            last_activity = t
+    d["last_activity_at"] = last_activity
+
+    d.setdefault("subscription_status", "Free" if not d.get("is_pro") else "Pro")
+    d["plan"] = "Pro" if d.get("is_pro") else "Free"
+    d.setdefault("billing_exempt", d.get("platform_admin_owned", False))
+    d.setdefault("billing_state", "Active")
+    d.setdefault("trial_end_date", d.get("trial_start_date"))
+    d.setdefault("next_billing_date", None)
+    d.setdefault("last_payment_date", None)
+    d.setdefault("payment_provider_id", d.get("stripe_customer_id"))
+    d.setdefault("feature_overrides", {})
+    return d
+
+
 class BulkDeleteOrgsRequest(BaseModel):
     org_ids: List[str]
 
@@ -122,6 +176,7 @@ def list_organizations_admin(
         orgs_ref = orgs_ref.where("is_deleted", "==", False)
     docs = list(orgs_ref.stream())
     results = []
+    owner_cache: dict[str, dict[str, str]] = {}
     for doc in docs:
         d = doc.to_dict()
         if d.get("is_deleted") and not include_deleted:
@@ -136,7 +191,7 @@ def list_organizations_admin(
             continue
         if verified_filter == "Unverified" and d.get("is_verified"):
             continue
-        doc_with_fields = _org_with_admin_fields(db, doc)
+        doc_with_fields = _org_with_admin_list_fields(db, doc, owner_cache)
         if subscription:
             want_pro = subscription.lower() == "pro"
             if want_pro != doc_with_fields.get("is_pro", False):
@@ -337,6 +392,71 @@ def mark_billing_exempt(org_id: str, admin: dict = Depends(require_platform_admi
         "updated_at": datetime.utcnow(),
     })
     return {"ok": True, "billing_exempt": True}
+
+
+@router.post("/organizations/{org_id}/billing/grant-pro")
+def grant_or_extend_pro(org_id: str, body: ProGrantUpdate, admin: dict = Depends(require_platform_admin)):
+    """Grant Pro access for N months, or lifetime when months=0."""
+    months = int(body.months)
+    if months < 0:
+        raise HTTPException(400, "months must be >= 0")
+
+    db = get_firestore()
+    ref = db.collection("organizations").document(org_id)
+    doc = ref.get()
+    if not doc.exists:
+        raise HTTPException(404, "Organization not found")
+
+    now = datetime.utcnow()
+    updates = {
+        "is_pro": True,
+        "updated_at": now,
+        "pro_admin_grant_months": months,
+        "pro_admin_granted_by": admin.get("id"),
+        "pro_admin_granted_at": now,
+    }
+
+    if months == 0:
+        # Lifetime complimentary access.
+        updates.update({
+            "platform_admin_owned": True,
+            "billing_exempt": True,
+            "billing_status": "exempt",
+            "period_end": None,
+            "trial_end_date": None,
+        })
+        ref.update(updates)
+        return {
+            "ok": True,
+            "plan": "Pro",
+            "billing_status": "exempt",
+            "period_end": None,
+            "months": 0,
+        }
+
+    existing = doc.to_dict() or {}
+    current_period_end = existing.get("period_end")
+    start = now
+    if isinstance(current_period_end, datetime) and current_period_end > now:
+        start = current_period_end
+    # Simple month approximation for admin grants.
+    from datetime import timedelta
+    new_period_end = start + timedelta(days=30 * months)
+
+    updates.update({
+        "platform_admin_owned": False,
+        "billing_exempt": False,
+        "billing_status": "active",
+        "period_end": new_period_end,
+    })
+    ref.update(updates)
+    return {
+        "ok": True,
+        "plan": "Pro",
+        "billing_status": "active",
+        "period_end": new_period_end,
+        "months": months,
+    }
 
 
 @router.post("/organizations/{org_id}/transfer-ownership")

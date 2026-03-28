@@ -37,11 +37,11 @@ export function EventsScreen({ route, navigation }: OrgDrawerScreenProps<'Calend
     navigation.setOptions({
       headerRight: isAdmin ? () => (
         <TouchableOpacity
-          style={{ padding: 8, marginRight: 8 }}
+          style={styles.headerActionBtn}
           onPress={() => Alert.alert('Create Event', 'Event creation is available in the web app. Open the web app to create events.')}
           activeOpacity={0.7}
         >
-          <Feather name="plus" size={26} color="#ffffff" />
+          <Feather name="plus" size={28} color="#ffffff" />
         </TouchableOpacity>
       ) : undefined,
     })
@@ -185,6 +185,12 @@ export function EventsScreen({ route, navigation }: OrgDrawerScreenProps<'Calend
 }
 
 const styles = StyleSheet.create({
+  headerActionBtn: {
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   container: { flex: 1, backgroundColor: '#000000' },
   center: {
     flex: 1,

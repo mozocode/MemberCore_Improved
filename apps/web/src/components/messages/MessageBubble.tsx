@@ -1,5 +1,9 @@
+import { useRef, useEffect } from 'react'
 import { formatTime } from '@/lib/dateUtils'
 import { REACTION_EMOJIS } from '@membercore/core'
+
+const LONG_PRESS_MS = 500
+const MOVE_THRESHOLD_PX = 12
 
 interface Message {
   id: string
@@ -25,6 +29,9 @@ interface MessageBubbleProps {
   onEdit?: (message: Message) => void
   onToggleReaction?: (messageId: string, emoji: string) => void
   onOpenEmojiPicker?: (messageId: string) => void
+  /** True after user long-presses this bubble (edit + quick reactions visible). */
+  showActions?: boolean
+  onLongPressActivate?: () => void
 }
 
 export function MessageBubble({
@@ -34,20 +41,56 @@ export function MessageBubble({
   onEdit,
   onToggleReaction,
   onOpenEmojiPicker,
+  showActions = false,
+  onLongPressActivate,
 }: MessageBubbleProps) {
   const sentAt = message.sent_at
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pointerStart = useRef<{ x: number; y: number } | null>(null)
+
+  const cancelLongPressTimer = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+    pointerStart.current = null
+  }
+
+  useEffect(() => () => cancelLongPressTimer(), [])
 
   return (
     <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
       <div
         className={`
-          max-w-[75%] md:max-w-[60%] px-4 py-2.5 rounded-2xl
+          max-w-[75%] md:max-w-[60%] px-4 py-2.5 rounded-2xl touch-manipulation
           ${isOwn
             ? 'bg-blue-600 text-white rounded-br-md'
             : 'bg-zinc-800 text-white rounded-bl-md'}
         `}
+        onContextMenu={(e) => e.preventDefault()}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          if ((e.target as HTMLElement).closest('button, a[href]')) return
+          pointerStart.current = { x: e.clientX, y: e.clientY }
+          cancelLongPressTimer()
+          longPressTimer.current = setTimeout(() => {
+            longPressTimer.current = null
+            onLongPressActivate?.()
+          }, LONG_PRESS_MS)
+        }}
+        onPointerMove={(e) => {
+          if (!pointerStart.current || !longPressTimer.current) return
+          const dx = e.clientX - pointerStart.current.x
+          const dy = e.clientY - pointerStart.current.y
+          if (dx * dx + dy * dy > MOVE_THRESHOLD_PX * MOVE_THRESHOLD_PX) {
+            cancelLongPressTimer()
+          }
+        }}
+        onPointerUp={cancelLongPressTimer}
+        onPointerCancel={cancelLongPressTimer}
+        data-message-bubble-id={message.id}
       >
-        {canEdit && onEdit && (
+        {showActions && canEdit && onEdit && (
           <button
             type="button"
             onClick={() => onEdit(message)}
@@ -111,25 +154,28 @@ export function MessageBubble({
               <span>{r.count}</span>
             </button>
           ))}
-          {REACTION_EMOJIS.map((emoji) => (
+          {showActions &&
+            REACTION_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => onToggleReaction?.(message.id, emoji)}
+                className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-zinc-700 bg-zinc-900/60 text-sm hover:bg-zinc-800"
+                aria-label={`React ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          {showActions && (
             <button
-              key={emoji}
               type="button"
-              onClick={() => onToggleReaction?.(message.id, emoji)}
+              onClick={() => onOpenEmojiPicker?.(message.id)}
               className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-zinc-700 bg-zinc-900/60 text-sm hover:bg-zinc-800"
-              aria-label={`React ${emoji}`}
+              aria-label="More reactions"
             >
-              {emoji}
+              +
             </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => onOpenEmojiPicker?.(message.id)}
-            className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-zinc-700 bg-zinc-900/60 text-sm hover:bg-zinc-800"
-            aria-label="More reactions"
-          >
-            +
-          </button>
+          )}
         </div>
       </div>
     </div>

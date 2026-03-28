@@ -1,11 +1,20 @@
 """Platform Admin: Overview Dashboard."""
 from datetime import datetime, timedelta
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db.firebase import get_firestore
 from app.core.security import require_platform_admin
 
 router = APIRouter(dependencies=[Depends(require_platform_admin)])
+
+OVERVIEW_CACHE_COLLECTION = "admin_metrics_cache"
+OVERVIEW_CACHE_DOC_ID = "overview_v2"
+OVERVIEW_CACHE_TTL_SECONDS = 300
+ALL_TIME_CACHE_DOC_ID = "payments_all_time_v1"
+ALL_TIME_CACHE_TTL_SECONDS = 60 * 60 * 24
+PAYMENT_DAILY_ROLLUP_COLLECTION = "admin_payment_rollups_daily"
+ROLLUP_WINDOW_DAYS = 30
 
 
 @router.get("/verify")
@@ -30,36 +39,206 @@ def _activation_score(org_dict: dict, member_count: int) -> int:
     return min(score, 5)
 
 
+def _to_datetime(value) -> Optional[datetime]:
+    """Best-effort conversion for Firestore timestamp-like values."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    return None
+
+
+def _date_key(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d")
+
+
+def _start_of_day(dt: datetime) -> datetime:
+    return datetime(dt.year, dt.month, dt.day)
+
+
+def _cache_get(db, doc_id: str):
+    doc = db.collection(OVERVIEW_CACHE_COLLECTION).document(doc_id).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    expires_at = _to_datetime(data.get("expires_at"))
+    if not expires_at or expires_at <= datetime.utcnow():
+        return None
+    return data.get("payload")
+
+
+def _cache_set(db, doc_id: str, payload: dict, ttl_seconds: int):
+    now = datetime.utcnow()
+    db.collection(OVERVIEW_CACHE_COLLECTION).document(doc_id).set({
+        "payload": payload,
+        "updated_at": now,
+        "expires_at": now + timedelta(seconds=ttl_seconds),
+    }, merge=True)
+
+
+def _daily_rollup_from_queries(db, day_start: datetime, day_end: datetime) -> dict:
+    dues_ids = set()
+    dues_amount = 0.0
+    for field in ("created_at", "paid_at"):
+        try:
+            docs = db.collection("payments").where(field, ">=", day_start).where(field, "<", day_end).stream()
+            for doc in docs:
+                if doc.id in dues_ids:
+                    continue
+                pd = doc.to_dict() or {}
+                amount = float(pd.get("amount", 0) or 0)
+                if amount <= 0:
+                    continue
+                dues_ids.add(doc.id)
+                dues_amount += amount
+        except Exception:
+            continue
+
+    ticket_ids = set()
+    tickets_amount = 0.0
+    try:
+        docs = db.collection("event_tickets").where("created_at", ">=", day_start).where("created_at", "<", day_end).stream()
+        for doc in docs:
+            if doc.id in ticket_ids:
+                continue
+            td = doc.to_dict() or {}
+            amount = float(td.get("amount", 0) or 0)
+            if amount <= 0:
+                continue
+            ticket_ids.add(doc.id)
+            tickets_amount += amount
+    except Exception:
+        pass
+
+    return {
+        "dues_count": len(dues_ids),
+        "dues_amount": round(dues_amount, 2),
+        "tickets_count": len(ticket_ids),
+        "tickets_amount": round(tickets_amount, 2),
+    }
+
+
+def _ensure_daily_payment_rollup(db, day_start: datetime) -> dict:
+    key = _date_key(day_start)
+    ref = db.collection(PAYMENT_DAILY_ROLLUP_COLLECTION).document(key)
+    doc = ref.get()
+    if doc.exists:
+        data = doc.to_dict() or {}
+        return {
+            "date": key,
+            "dues_count": int(data.get("dues_count", 0) or 0),
+            "dues_amount": float(data.get("dues_amount", 0) or 0),
+            "tickets_count": int(data.get("tickets_count", 0) or 0),
+            "tickets_amount": float(data.get("tickets_amount", 0) or 0),
+        }
+
+    day_end = day_start + timedelta(days=1)
+    rollup = _daily_rollup_from_queries(db, day_start, day_end)
+    now = datetime.utcnow()
+    ref.set({"date": key, **rollup, "created_at": now, "updated_at": now}, merge=True)
+    return {"date": key, **rollup}
+
+
+def _get_30d_rollup_totals(db, now: datetime) -> dict:
+    start_today = _start_of_day(now)
+    totals = {
+        "dues_count": 0,
+        "dues_amount": 0.0,
+        "tickets_count": 0,
+        "tickets_amount": 0.0,
+    }
+    for i in range(ROLLUP_WINDOW_DAYS):
+        day_start = start_today - timedelta(days=i)
+        rollup = _ensure_daily_payment_rollup(db, day_start)
+        totals["dues_count"] += int(rollup.get("dues_count", 0) or 0)
+        totals["dues_amount"] += float(rollup.get("dues_amount", 0) or 0)
+        totals["tickets_count"] += int(rollup.get("tickets_count", 0) or 0)
+        totals["tickets_amount"] += float(rollup.get("tickets_amount", 0) or 0)
+    totals["dues_amount"] = round(totals["dues_amount"], 2)
+    totals["tickets_amount"] = round(totals["tickets_amount"], 2)
+    return totals
+
+
+def _legacy_scan_all_time_totals(db) -> dict:
+    dues_all_time_count = 0
+    dues_all_time_amount = 0.0
+    tickets_all_time_count = 0
+    tickets_all_time_amount = 0.0
+    try:
+        for doc in db.collection("payments").stream():
+            pd = doc.to_dict()
+            amount = float(pd.get("amount", 0) or 0)
+            if amount <= 0:
+                continue
+            dues_all_time_count += 1
+            dues_all_time_amount += amount
+    except Exception:
+        pass
+    try:
+        for doc in db.collection("event_tickets").stream():
+            td = doc.to_dict()
+            amount = float(td.get("amount", 0) or 0)
+            if amount <= 0:
+                continue
+            tickets_all_time_count += 1
+            tickets_all_time_amount += amount
+    except Exception:
+        pass
+    return {
+        "dues_count": dues_all_time_count,
+        "dues_amount": round(dues_all_time_amount, 2),
+        "tickets_count": tickets_all_time_count,
+        "tickets_amount": round(tickets_all_time_amount, 2),
+    }
+
+
+def _get_all_time_totals_cached(db) -> dict:
+    cached = _cache_get(db, ALL_TIME_CACHE_DOC_ID)
+    if isinstance(cached, dict):
+        return {
+            "dues_count": int(cached.get("dues_count", 0) or 0),
+            "dues_amount": float(cached.get("dues_amount", 0) or 0),
+            "tickets_count": int(cached.get("tickets_count", 0) or 0),
+            "tickets_amount": float(cached.get("tickets_amount", 0) or 0),
+        }
+    totals = _legacy_scan_all_time_totals(db)
+    _cache_set(db, ALL_TIME_CACHE_DOC_ID, totals, ALL_TIME_CACHE_TTL_SECONDS)
+    return totals
+
+
 @router.get("/overview")
 def get_overview(admin: dict = Depends(require_platform_admin)):
-    """Platform-wide metrics for admin dashboard (spec shape)."""
+    """Platform-wide metrics for admin dashboard (spec shape).
+
+    Uses short-lived cache + daily payment rollups to keep response times stable.
+    """
     db = get_firestore()
+    cached_payload = _cache_get(db, OVERVIEW_CACHE_DOC_ID)
+    if isinstance(cached_payload, dict):
+        return cached_payload
+
     now = datetime.utcnow()
     cutoff_7 = now - timedelta(days=7)
-    cutoff_30 = now - timedelta(days=30)
 
     users = list(db.collection("users").stream())
     orgs = list(db.collection("organizations").stream())
     orgs_active = [o for o in orgs if not o.to_dict().get("is_deleted")]
     pro_orgs_list = [o for o in orgs_active if o.to_dict().get("is_pro")]
 
-    # Users
     users_7d = sum(1 for u in users if (u.to_dict().get("created_at") or datetime.min) >= cutoff_7)
-    # Clubs (orgs)
     clubs_7d = sum(1 for o in orgs_active if (o.to_dict().get("created_at") or datetime.min) >= cutoff_7)
-    # Events
-    events_docs = list(db.collection("events").stream())
-    events_total = len(events_docs)
+    events_total = len(list(db.collection("events").stream()))
 
-    # Activation: orgs with score >= 1 in last 14 days as "activated"
     cutoff_14 = now - timedelta(days=14)
     activated_count = 0
     activated_new = 0
     for o in orgs_active:
         od = o.to_dict()
         members = list(db.collection("members").where("organization_id", "==", o.id).get())
-        mc = len(members)
-        score = _activation_score(od, mc)
+        score = _activation_score(od, len(members))
         if score >= 1:
             activated_count += 1
             created = od.get("created_at") or datetime.min
@@ -67,7 +246,6 @@ def get_overview(admin: dict = Depends(require_platform_admin)):
                 activated_new += 1
     activated_orgs_percent = round(100.0 * activated_count / len(orgs_active), 1) if orgs_active else 0.0
 
-    # Trial → Pro (simplified: orgs that have is_pro and had trial_start_date in last 14d - we don't track conversions separately)
     trial_to_pro_trials = 0
     trial_to_pro_converted = 0
     for o in orgs_active:
@@ -76,23 +254,28 @@ def get_overview(admin: dict = Depends(require_platform_admin)):
             trial_to_pro_trials += 1
         if od.get("is_pro"):
             trial_to_pro_converted += 1
-    # MRR / ARPA: placeholder without Stripe
+
     pro_mrr = 0.0
     arpa = 97.0 if pro_orgs_list else 0.0
-    paid_payments_30d_count = 0
-    paid_payments_30d_amount = 0.0
-    try:
-        payments_ref = db.collection("payments")
-        for doc in payments_ref.stream():
-            pd = doc.to_dict()
-            created = pd.get("created_at") or pd.get("paid_at") or datetime.min
-            if created >= cutoff_30 and pd.get("status") == "paid":
-                paid_payments_30d_count += 1
-                paid_payments_30d_amount += float(pd.get("amount", 0) or 0)
-    except Exception:
-        pass
 
-    return {
+    rollup_30d = _get_30d_rollup_totals(db, now)
+    all_time = _get_all_time_totals_cached(db)
+
+    dues_30d_count = rollup_30d["dues_count"]
+    dues_30d_amount = rollup_30d["dues_amount"]
+    tickets_30d_count = rollup_30d["tickets_count"]
+    tickets_30d_amount = rollup_30d["tickets_amount"]
+    dues_all_time_count = all_time["dues_count"]
+    dues_all_time_amount = all_time["dues_amount"]
+    tickets_all_time_count = all_time["tickets_count"]
+    tickets_all_time_amount = all_time["tickets_amount"]
+
+    platform_all_time_count = dues_all_time_count + tickets_all_time_count
+    platform_all_time_amount = dues_all_time_amount + tickets_all_time_amount
+    platform_30d_count = dues_30d_count + tickets_30d_count
+    platform_30d_amount = dues_30d_amount + tickets_30d_amount
+
+    payload = {
         "pro_mrr": pro_mrr,
         "pro_orgs_count": len(pro_orgs_list),
         "trial_to_pro_converted": trial_to_pro_converted,
@@ -103,10 +286,28 @@ def get_overview(admin: dict = Depends(require_platform_admin)):
         "users": {"total": len(users), "last_7_days": users_7d},
         "clubs": {"total": len(orgs_active), "last_7_days": clubs_7d},
         "events": {"total": events_total},
-        "paid_payments_30d": {"count": paid_payments_30d_count, "amount": round(paid_payments_30d_amount, 2)},
+        "paid_payments_30d": {"count": dues_30d_count, "amount": round(dues_30d_amount, 2)},
+        "platform_volume_30d": {
+            "count": platform_30d_count,
+            "amount": round(platform_30d_amount, 2),
+            "dues_count": dues_30d_count,
+            "dues_amount": round(dues_30d_amount, 2),
+            "tickets_count": tickets_30d_count,
+            "tickets_amount": round(tickets_30d_amount, 2),
+        },
+        "platform_volume_all_time": {
+            "count": platform_all_time_count,
+            "amount": round(platform_all_time_amount, 2),
+            "dues_count": dues_all_time_count,
+            "dues_amount": round(dues_all_time_amount, 2),
+            "tickets_count": tickets_all_time_count,
+            "tickets_amount": round(tickets_all_time_amount, 2),
+        },
         "pro_churn_30d": None,
         "pro_churn_90d": None,
     }
+    _cache_set(db, OVERVIEW_CACHE_DOC_ID, payload, OVERVIEW_CACHE_TTL_SECONDS)
+    return payload
 
 
 def _verification_queue(db):

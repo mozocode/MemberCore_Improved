@@ -70,6 +70,7 @@ export function ChatView({ conversationId, orgId, currentUser, onBack }: ChatVie
   const [sending, setSending] = useState(false)
   const [editingMessage, setEditingMessage] = useState<Message | null>(null)
   const [emojiPickerMessageId, setEmojiPickerMessageId] = useState<string | null>(null)
+  const [messageActionsId, setMessageActionsId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -84,7 +85,20 @@ export function ChatView({ conversationId, orgId, currentUser, onBack }: ChatVie
     setNewMessage('')
     setSelectedImageDataUrl(null)
     setSelectedImageName(null)
+    setMessageActionsId(null)
   }, [orgId, conversationId])
+
+  useEffect(() => {
+    if (!messageActionsId) return
+    const closeIfOutside = (e: PointerEvent) => {
+      const el = (e.target as HTMLElement).closest('[data-message-bubble-id]')
+      const id = el?.getAttribute('data-message-bubble-id')
+      if (id === messageActionsId) return
+      setMessageActionsId(null)
+    }
+    document.addEventListener('pointerdown', closeIfOutside, true)
+    return () => document.removeEventListener('pointerdown', closeIfOutside, true)
+  }, [messageActionsId])
 
   useEffect(() => {
     function fetchMessages() {
@@ -237,14 +251,20 @@ export function ChatView({ conversationId, orgId, currentUser, onBack }: ChatVie
                       message={msg}
                       isOwn={msg.sender_id === currentUser?.id}
                       canEdit={msg.sender_id === currentUser?.id}
+                      showActions={messageActionsId === msg.id}
+                      onLongPressActivate={() => setMessageActionsId(msg.id)}
                       onEdit={(m) => {
+                        setMessageActionsId(null)
                         setEditingMessage(m)
                         setNewMessage(m.text || '')
                         setSelectedImageDataUrl(null)
                         setSelectedImageName(null)
                       }}
                       onToggleReaction={toggleReaction}
-                      onOpenEmojiPicker={(messageId) => setEmojiPickerMessageId(messageId)}
+                      onOpenEmojiPicker={(messageId) => {
+                        setMessageActionsId(null)
+                        setEmojiPickerMessageId(messageId)
+                      }}
                     />
                   ))}
                 </div>

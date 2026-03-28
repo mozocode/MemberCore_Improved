@@ -188,7 +188,7 @@ export function OrgHomeScreen({ route }: any) {
             )}
             <TouchableOpacity
               style={styles.goProButton}
-              onPress={() => nav.navigate('More', { orgId, screen: 'Settings', params: { orgId } })}
+              onPress={() => nav.navigate('Settings', { orgId })}
               activeOpacity={0.7}
             >
               <Text style={styles.goProText}>Go Pro</Text>
@@ -208,7 +208,7 @@ export function OrgHomeScreen({ route }: any) {
               if (tab === 'Chat' || tab === 'Calendar' || tab === 'Members') {
                 nav.navigate(tab, { orgId })
               } else {
-                nav.navigate('More', { orgId, screen: tab, params: { orgId } })
+                nav.navigate(tab as keyof OrgDrawerParamList, { orgId } as any)
               }
             }}
           >

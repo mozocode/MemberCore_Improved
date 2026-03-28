@@ -2,8 +2,14 @@
 # Deploy backend to Google Cloud Run.
 # Run from project root. Requires gcloud CLI logged in.
 #
-# For event ticket payments, set Stripe env vars in Cloud Run (Console or gcloud):
-#   STRIPE_SECRET_KEY, FRONTEND_URL, and optionally STRIPE_WEBHOOK_SECRET
+# For Stripe, set env vars in Cloud Run (Console or gcloud):
+#   STRIPE_SECRET_KEY, FRONTEND_URL,
+#   STRIPE_PAYMENTS_WEBHOOK_SECRET (or STRIPE_WEBHOOK_SECRET fallback),
+#   STRIPE_SUBSCRIPTION_WEBHOOK_SECRET (or STRIPE_WEBHOOK_SECRET fallback),
+#   STRIPE_PRICE_PRO_MONTHLY, STRIPE_PRICE_PRO_ANNUAL
+# Optional Google calendar daily auto-sync:
+#   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET,
+#   GOOGLE_CALENDAR_OAUTH_REDIRECT_URI, GOOGLE_CALENDAR_SYNC_SECRET
 # See docs/PAYMENTS.md.
 
 set -e

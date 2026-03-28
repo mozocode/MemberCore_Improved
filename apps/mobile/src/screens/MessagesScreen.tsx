@@ -11,13 +11,18 @@ import {
   Platform,
   Modal,
   Image,
+  Alert,
 } from 'react-native'
 import { Feather } from '@expo/vector-icons'
 import { getApi } from '@membercore/services'
 import * as Haptics from 'expo-haptics'
+import * as ImagePicker from 'expo-image-picker'
+import * as FileSystem from 'expo-file-system'
 import { ListSkeleton } from '../components/ListSkeleton'
 import { useAuth } from '../contexts/AuthContext'
 import type { OrgDrawerScreenProps } from '../navigation/types'
+
+const MAX_ATTACHMENT_DATA_URL_LENGTH = 680_000
 
 interface Conversation {
   id: string
@@ -39,6 +44,7 @@ interface DmMessage {
   sender_id: string
   content?: string
   text?: string
+  image_data_url?: string
   created_at?: string
   sent_at?: string
 }
@@ -60,6 +66,8 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
   const [messages, setMessages] = useState<DmMessage[]>([])
   const [msgLoading, setMsgLoading] = useState(false)
   const [input, setInput] = useState('')
+  const [selectedImageDataUrl, setSelectedImageDataUrl] = useState<string | null>(null)
+  const [selectedImageName, setSelectedImageName] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [showNewMessage, setShowNewMessage] = useState(false)
   const [members, setMembers] = useState<OrgMember[]>([])
@@ -155,15 +163,19 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
   }, [orgId, activeConvId])
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() || !activeConvId) return
+    if ((!input.trim() && !selectedImageDataUrl) || !activeConvId) return
     setSending(true)
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    const bodyText = input.trim()
     try {
       await api.post(`/organizations/${orgId}/dm/conversations/${activeConvId}/messages`, {
-        content: input.trim(),
-        text: input.trim(),
+        content: bodyText,
+        text: bodyText,
+        image_data_url: selectedImageDataUrl,
       })
       setInput('')
+      setSelectedImageDataUrl(null)
+      setSelectedImageName(null)
       fetchMessages(activeConvId)
     } catch {
       // silently fail
@@ -171,6 +183,36 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
       setSending(false)
     }
   }, [input, activeConvId, orgId, fetchMessages])
+
+  const pickImageForMessage = useCallback(async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow photo library access to attach images.')
+      return
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      quality: 0.5,
+    })
+    if (result.canceled || !result.assets?.[0]) return
+    const asset = result.assets[0]
+    try {
+      const b64 = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: 'base64',
+      })
+      const mime = asset.mimeType || 'image/jpeg'
+      const dataUrl = `data:${mime};base64,${b64}`
+      if (dataUrl.length > MAX_ATTACHMENT_DATA_URL_LENGTH) {
+        Alert.alert('Image Too Large', 'Please choose a smaller image.')
+        return
+      }
+      setSelectedImageDataUrl(dataUrl)
+      setSelectedImageName(asset.fileName || 'Image')
+    } catch {
+      Alert.alert('Attachment Failed', 'Could not read that image. Please try another one.')
+    }
+  }, [])
 
   const openNewMessageModal = useCallback(async () => {
     setShowNewMessage(true)
@@ -180,10 +222,10 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
       const list: OrgMember[] = (data || [])
         .map((m: any) => ({
           user_id: m.id || m.user_id,
-          name: m.name || m.email || 'Unknown',
+          name: (m.name && String(m.name).trim()) || 'Member',
           email: m.email,
           avatar: m.avatar,
-          initial: (m.name || m.email || '?').charAt(0).toUpperCase(),
+          initial: ((m.name && String(m.name).trim()) || '?').charAt(0).toUpperCase(),
         }))
       setMembers(list)
     } catch {
@@ -241,7 +283,7 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
           )}
           <View style={{ flex: 1 }}>
             <Text style={styles.chatHeaderName} numberOfLines={1}>
-              {conv?.other_participant?.name || conv?.other_user_name || conv?.other_participant?.email || conv?.other_user_email || 'Conversation'}
+              {conv?.other_participant?.name || conv?.other_user_name || 'Conversation'}
             </Text>
             {typingUsers[activeConvId] ? (
               <Text style={styles.typingText}>typing...</Text>
@@ -272,9 +314,18 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
               return (
                 <View style={[styles.dmBubbleRow, isMe && styles.dmBubbleRowMe]}>
                   <View style={[styles.dmBubble, isMe ? styles.dmBubbleMe : styles.dmBubbleOther]}>
-                    <Text style={[styles.dmBubbleText, isMe && styles.dmBubbleTextMe]}>
-                      {messageText}
-                    </Text>
+                    {item.image_data_url ? (
+                      <Image
+                        source={{ uri: item.image_data_url }}
+                        style={styles.dmBubbleImage}
+                        resizeMode="cover"
+                      />
+                    ) : null}
+                    {messageText ? (
+                      <Text style={[styles.dmBubbleText, isMe && styles.dmBubbleTextMe]}>
+                        {messageText}
+                      </Text>
+                    ) : null}
                     <Text style={styles.dmBubbleTime}>
                       {messageTime ? new Date(messageTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
                     </Text>
@@ -292,7 +343,34 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
         )}
 
         {/* Input */}
+        {selectedImageDataUrl ? (
+          <View style={styles.attachmentPreview}>
+            <Image source={{ uri: selectedImageDataUrl }} style={styles.attachmentPreviewImage} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.attachmentPreviewName} numberOfLines={1}>
+                {selectedImageName || 'Image selected'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedImageDataUrl(null)
+                setSelectedImageName(null)
+              }}
+              style={styles.attachmentRemoveBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Feather name="x" size={16} color="#a1a1aa" />
+            </TouchableOpacity>
+          </View>
+        ) : null}
         <View style={styles.inputBar}>
+          <TouchableOpacity
+            style={styles.attachBtn}
+            onPress={pickImageForMessage}
+            disabled={sending}
+          >
+            <Feather name="paperclip" size={18} color="#d4d4d8" />
+          </TouchableOpacity>
           <TextInput
             style={styles.input}
             placeholder="Type a message..."
@@ -302,9 +380,9 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
             multiline
           />
           <TouchableOpacity
-            style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
+            style={[styles.sendBtn, ((!input.trim() && !selectedImageDataUrl) || sending) && styles.sendBtnDisabled]}
             onPress={handleSend}
-            disabled={!input.trim() || sending}
+            disabled={(!input.trim() && !selectedImageDataUrl) || sending}
           >
             {sending ? (
               <ActivityIndicator size="small" color="#000000" />
@@ -363,7 +441,6 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
                     )}
                     <View style={styles.memberInfo}>
                       <Text style={styles.memberName}>{item.name}</Text>
-                      {item.email ? <Text style={styles.memberEmail}>{item.email}</Text> : null}
                     </View>
                   </TouchableOpacity>
                 )}
@@ -404,9 +481,8 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
           removeClippedSubviews={true}
           renderItem={({ item }) => {
             const otherName = item.other_participant?.name || item.other_user_name
-            const otherEmail = item.other_participant?.email || item.other_user_email
             const otherAvatar = item.other_participant?.avatar || item.other_user_avatar
-            const displayName = otherName || otherEmail || 'Unknown'
+            const displayName = otherName || 'Member'
             const timeStr = item.updated_at || item.last_message_at || (typeof item.last_message === 'object' && item.last_message?.sent_at) || ''
             return (
               <TouchableOpacity
@@ -461,10 +537,8 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000000' },
 
   headerBtn: {
-    padding: 8,
-    marginRight: 4,
-    minHeight: 44,
-    minWidth: 44,
+    width: 46,
+    height: 46,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -541,9 +615,36 @@ const styles = StyleSheet.create({
   dmBubble: { maxWidth: '80%', borderRadius: 16, padding: 12, paddingBottom: 6 },
   dmBubbleMe: { backgroundColor: '#3b82f6', borderBottomRightRadius: 4 },
   dmBubbleOther: { backgroundColor: '#18181b', borderWidth: 1, borderColor: '#27272a', borderBottomLeftRadius: 4 },
+  dmBubbleImage: {
+    width: 220,
+    height: 220,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: '#27272a',
+  },
   dmBubbleText: { color: '#d4d4d8', fontSize: 15, lineHeight: 20 },
   dmBubbleTextMe: { color: '#ffffff' },
   dmBubbleTime: { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 4, textAlign: 'right' },
+
+  attachmentPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#27272a',
+    backgroundColor: '#09090b',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
+  attachmentPreviewImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: '#27272a',
+  },
+  attachmentPreviewName: { color: '#a1a1aa', fontSize: 12 },
+  attachmentRemoveBtn: { padding: 4 },
 
   // Input
   inputBar: {
@@ -555,6 +656,16 @@ const styles = StyleSheet.create({
     borderTopColor: '#27272a',
     paddingHorizontal: 16,
     paddingVertical: 16,
+  },
+  attachBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   input: {
     flex: 1,
@@ -650,6 +761,5 @@ const styles = StyleSheet.create({
   memberInitial: { color: '#a1a1aa', fontSize: 14, fontWeight: '600' },
   memberInfo: { flex: 1, minWidth: 0 },
   memberName: { color: '#ffffff', fontSize: 15, fontWeight: '500' },
-  memberEmail: { color: '#71717a', fontSize: 13, marginTop: 1 },
   noMembers: { color: '#71717a', fontSize: 14, textAlign: 'center', padding: 24 },
 })

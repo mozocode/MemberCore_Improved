@@ -80,12 +80,7 @@ export function SettingsOrgScreen({ route, navigation }: RootStackScreenProps<'S
 
   return (
     <View style={styles.container}>
-      {/* Tab pills */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabRow}
-      >
+      <View style={styles.tabRow}>
         {TABS.map((t) => (
           <TouchableOpacity
             key={t.key}
@@ -98,7 +93,7 @@ export function SettingsOrgScreen({ route, navigation }: RootStackScreenProps<'S
             </Text>
           </TouchableOpacity>
         ))}
-      </ScrollView>
+      </View>
 
       {tab === 'profile' && <ProfileTab orgId={orgId} />}
       {tab === 'members' && <MembersTab orgId={orgId} />}
@@ -769,20 +764,30 @@ const styles = StyleSheet.create({
   /* Tabs */
   tabRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
+    backgroundColor: '#111113',
+    marginHorizontal: 16,
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
+    paddingVertical: 6,
+    marginTop: 12,
+    marginBottom: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#27272a',
   },
   tabPill: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 38,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     borderRadius: 8,
   },
   tabActive: { backgroundColor: '#ffffff' },
-  tabInactive: { backgroundColor: '#27272a' },
-  tabActiveText: { color: '#000000', fontSize: 14, fontWeight: '600' },
-  tabInactiveText: { color: '#a1a1aa', fontSize: 14, fontWeight: '600' },
+  tabInactive: { backgroundColor: 'transparent' },
+  tabActiveText: { color: '#000000', fontSize: 13, fontWeight: '700' },
+  tabInactiveText: { color: '#a1a1aa', fontSize: 13, fontWeight: '600' },
 
   /* Card */
   card: {

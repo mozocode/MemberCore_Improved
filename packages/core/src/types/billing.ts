@@ -18,6 +18,11 @@ export interface BillingState {
   trial_end_date?: string | null
   period_end?: string | null
   stripe_customer_id?: string | null
+  stripe_connected_account_id?: string | null
+  stripe_connect_onboarded?: boolean
+  stripe_connect_charges_enabled?: boolean
+  stripe_connect_payouts_enabled?: boolean
+  stripe_connect_ready?: boolean
   is_billing_exempt?: boolean
 }
 

@@ -16,15 +16,17 @@ import {
   Image,
   RefreshControl,
 } from 'react-native'
-import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { Feather } from '@expo/vector-icons'
 import type { Channel, Message } from '@membercore/core'
 import { REACTION_EMOJIS } from '@membercore/core'
 import { chatService, getApi } from '@membercore/services'
 import * as Haptics from 'expo-haptics'
+import * as ImagePicker from 'expo-image-picker'
+import * as FileSystem from 'expo-file-system'
 import { useAuth } from '../contexts/AuthContext'
 import type { OrgDrawerScreenProps } from '../navigation/types'
 
+const MAX_ATTACHMENT_DATA_URL_LENGTH = 680_000
 const GROUP_WINDOW_MS = 5 * 60 * 1000
 
 const EMOJI_CATEGORIES: { label: string; emojis: string[] }[] = [
@@ -43,6 +45,8 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
+  const [selectedImageDataUrl, setSelectedImageDataUrl] = useState<string | null>(null)
+  const [selectedImageName, setSelectedImageName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [replyTo, setReplyTo] = useState<Message | null>(null)
@@ -67,6 +71,10 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
 
   const flatListRef = useRef<FlatList>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const lastTapRef = useRef<{ messageId: string; time: number } | null>(null)
+  const shouldAutoScrollRef = useRef(true)
+  const isNearBottomRef = useRef(true)
+  const pendingAutoScrollRef = useRef(false)
 
   const canManage = myRole === 'owner' || myRole === 'admin'
 
@@ -77,6 +85,7 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
   }, [orgId])
 
   useEffect(() => {
+    shouldAutoScrollRef.current = true
     chatService
       .listChannels(orgId)
       .then((chs) => {
@@ -91,7 +100,7 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
   useEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <TouchableOpacity
             style={headerStyles.channelBtn}
             onPress={() => setChannelPickerVisible(true)}
@@ -126,7 +135,12 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
     if (!activeChannel) return
     try {
       const res = await chatService.listMessages(orgId, activeChannel.id)
-      setMessages(res.messages || [])
+      const sorted = [...(res.messages || [])].sort((a, b) => {
+        const aTs = a.created_at ? new Date(a.created_at).getTime() : 0
+        const bTs = b.created_at ? new Date(b.created_at).getTime() : 0
+        return aTs - bTs
+      })
+      setMessages(sorted)
       setPinnedMessageId((res as any).pinned_message_id ?? null)
     } catch {
       // silently fail
@@ -136,6 +150,23 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
   useEffect(() => {
     fetchMessages()
   }, [fetchMessages])
+
+  useEffect(() => {
+    if (!activeChannel || messages.length === 0 || !shouldAutoScrollRef.current) return
+    const t = setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: false })
+      shouldAutoScrollRef.current = false
+      pendingAutoScrollRef.current = false
+    }, 120)
+    return () => clearTimeout(t)
+  }, [activeChannel, messages.length])
+
+  useEffect(() => {
+    if (!activeChannel) return
+    shouldAutoScrollRef.current = true
+    isNearBottomRef.current = true
+    pendingAutoScrollRef.current = false
+  }, [activeChannel?.id])
 
   useEffect(() => {
     if (!token || !activeChannel) return
@@ -150,6 +181,7 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
       try {
         const data = JSON.parse(evt.data)
         if (data.type === 'message' && data.message) {
+          pendingAutoScrollRef.current = isNearBottomRef.current
           setMessages((prev) => {
             if (prev.some((x) => x.id === data.message.id)) return prev
             return [...prev, data.message]
@@ -173,22 +205,58 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
   }, [fetchMessages])
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() || !activeChannel) return
+    if ((!input.trim() && !selectedImageDataUrl) || !activeChannel) return
     setSending(true)
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    const text = input.trim()
+    const replySnippet = (replyTo?.content || '').slice(0, 200) || (replyTo?.image_data_url ? '[Image]' : undefined)
     try {
       await chatService.sendMessage(orgId, activeChannel.id, {
-        content: input.trim(),
+        content: text,
+        image_data_url: selectedImageDataUrl || undefined,
         reply_to_message_id: replyTo?.id,
+        reply_to_snippet: replySnippet,
       })
       setInput('')
+      setSelectedImageDataUrl(null)
+      setSelectedImageName(null)
       setReplyTo(null)
     } catch {
       // silently fail
     } finally {
       setSending(false)
     }
-  }, [input, orgId, activeChannel, replyTo])
+  }, [input, selectedImageDataUrl, orgId, activeChannel, replyTo])
+
+  const pickImageForChat = useCallback(async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow photo library access to attach images.')
+      return
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      quality: 0.5,
+    })
+    if (result.canceled || !result.assets?.[0]) return
+    const asset = result.assets[0]
+    try {
+      const b64 = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: 'base64',
+      })
+      const mime = asset.mimeType || 'image/jpeg'
+      const dataUrl = `data:${mime};base64,${b64}`
+      if (dataUrl.length > MAX_ATTACHMENT_DATA_URL_LENGTH) {
+        Alert.alert('Image Too Large', 'Please choose a smaller image.')
+        return
+      }
+      setSelectedImageDataUrl(dataUrl)
+      setSelectedImageName(asset.fileName || 'Image')
+    } catch {
+      Alert.alert('Attachment Failed', 'Could not read that image. Please try another one.')
+    }
+  }, [])
 
   const toggleReaction = useCallback(
     async (messageId: string, emoji: string) => {
@@ -203,6 +271,20 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
       }
     },
     [orgId, activeChannel],
+  )
+
+  const handleMessagePress = useCallback(
+    (messageId: string) => {
+      const now = Date.now()
+      const last = lastTapRef.current
+      if (last?.messageId === messageId && now - last.time < 400) {
+        lastTapRef.current = null
+        toggleReaction(messageId, '👍')
+        return
+      }
+      lastTapRef.current = { messageId, time: now }
+    },
+    [toggleReaction],
   )
 
   const handlePin = useCallback(async (message: Message) => {
@@ -272,29 +354,13 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
   }
 
   const renderMessage = ({ item }: { item: (typeof grouped)[number] }) => {
-    const doubleTap = Gesture.Tap()
-      .numberOfTaps(2)
-      .onEnd(() => {
-        toggleReaction(item.id, '👍')
-      })
-
-    const swipeReply = Gesture.Pan()
-      .activeOffsetX(30)
-      .onEnd((evt) => {
-        if (evt.translationX > 60) {
-          setReplyTo(item)
-        }
-      })
-
-    const composed = Gesture.Race(doubleTap, swipeReply)
-
     const isPinned = pinnedMessageId === item.id
 
     return (
-      <GestureDetector gesture={composed}>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onLongPress={() => setActionMessage(item)}
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={() => handleMessagePress(item.id)}
+        onLongPress={() => setActionMessage(item)}
           style={[
             styles.messageBubble,
             !item.showHeader && styles.messageBubbleGrouped,
@@ -380,7 +446,12 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
                   <Text style={styles.pollCardLink}>View poll →</Text>
                 </View>
               ) : (
-                <Text style={styles.messageText}>{item.content}</Text>
+                <>
+                  {item.image_data_url ? (
+                    <Image source={{ uri: item.image_data_url }} style={styles.messageImage} resizeMode="cover" />
+                  ) : null}
+                  {item.content ? <Text style={styles.messageText}>{item.content}</Text> : null}
+                </>
               )}
 
               {/* Reactions */}
@@ -414,7 +485,6 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
             </View>
           </View>
         </TouchableOpacity>
-      </GestureDetector>
     )
   }
 
@@ -684,7 +754,19 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
             data={grouped}
             keyExtractor={(m) => m.id}
             contentContainerStyle={styles.messageList}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+            onContentSizeChange={() => {
+              if (shouldAutoScrollRef.current || pendingAutoScrollRef.current) {
+                flatListRef.current?.scrollToEnd({ animated: pendingAutoScrollRef.current })
+                pendingAutoScrollRef.current = false
+              }
+            }}
+            onScroll={(evt: any) => {
+              const { contentOffset, layoutMeasurement, contentSize } = evt.nativeEvent
+              const distanceFromBottom =
+                contentSize.height - (contentOffset.y + layoutMeasurement.height)
+              isNearBottomRef.current = distanceFromBottom < 72
+            }}
+            scrollEventThrottle={16}
             renderItem={renderMessage}
             initialNumToRender={20}
             maxToRenderPerBatch={15}
@@ -706,7 +788,7 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
           <Feather name="corner-up-left" size={14} color="#a1a1aa" />
           <Text style={styles.replyPreviewText} numberOfLines={1}>
             Replying to {replyTo.sender_nickname || replyTo.sender_name}:{' '}
-            {(replyTo.content || '').slice(0, 50)}…
+            {((replyTo.content || '').slice(0, 50) || (replyTo.image_data_url ? '[Image]' : ''))}…
           </Text>
           <TouchableOpacity
             onPress={() => setReplyTo(null)}
@@ -718,8 +800,35 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
         </View>
       )}
 
+      {selectedImageDataUrl ? (
+        <View style={styles.attachmentPreview}>
+          <Image source={{ uri: selectedImageDataUrl }} style={styles.attachmentPreviewImage} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.attachmentPreviewName} numberOfLines={1}>
+              {selectedImageName || 'Image selected'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => {
+              setSelectedImageDataUrl(null)
+              setSelectedImageName(null)
+            }}
+            style={styles.attachmentRemoveBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Feather name="x" size={16} color="#a1a1aa" />
+          </TouchableOpacity>
+        </View>
+      ) : null}
       {/* Input bar */}
       <View style={styles.inputBar}>
+        <TouchableOpacity
+          style={styles.attachBtn}
+          onPress={pickImageForChat}
+          disabled={sending}
+        >
+          <Feather name="paperclip" size={18} color="#d4d4d8" />
+        </TouchableOpacity>
         <TextInput
           style={styles.input}
           placeholder={
@@ -733,9 +842,9 @@ export function ChatScreen({ route, navigation }: OrgDrawerScreenProps<'Chat'>) 
           multiline
         />
         <TouchableOpacity
-          style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
+          style={[styles.sendBtn, ((!input.trim() && !selectedImageDataUrl) || sending) && styles.sendBtnDisabled]}
           onPress={handleSend}
-          disabled={!input.trim() || sending}
+          disabled={(!input.trim() && !selectedImageDataUrl) || sending}
         >
           {sending ? (
             <ActivityIndicator size="small" color="#000000" />
@@ -922,6 +1031,13 @@ const styles = StyleSheet.create({
   replyBar: { borderLeftWidth: 2, borderLeftColor: '#52525b', paddingLeft: 8, marginTop: 2 },
   replyBarText: { color: '#71717a', fontSize: 12 },
 
+  messageImage: {
+    marginTop: 6,
+    width: 220,
+    height: 220,
+    borderRadius: 12,
+    backgroundColor: '#27272a',
+  },
   messageText: { color: '#d4d4d8', fontSize: 14, lineHeight: 20, marginTop: 2 },
 
   // Event card in chat
@@ -982,11 +1098,41 @@ const styles = StyleSheet.create({
   replyPreviewText: { flex: 1, color: '#a1a1aa', fontSize: 14 },
   replyDismiss: { padding: 4 },
 
+  attachmentPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#27272a',
+    backgroundColor: '#09090b',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
+  attachmentPreviewImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: '#27272a',
+  },
+  attachmentPreviewName: { color: '#a1a1aa', fontSize: 12 },
+  attachmentRemoveBtn: { padding: 4 },
+
   // Input bar
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
     backgroundColor: '#000000', borderTopWidth: 1, borderTopColor: '#27272a',
     paddingHorizontal: 16, paddingVertical: 16,
+  },
+  attachBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   input: {
     flex: 1, backgroundColor: '#18181b', borderRadius: 12, borderWidth: 1, borderColor: '#3f3f46',
@@ -1002,11 +1148,11 @@ const styles = StyleSheet.create({
 const headerStyles = StyleSheet.create({
   channelBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#27272a',
-    borderRadius: 8, minHeight: 36, maxWidth: 140,
+    paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#27272a',
+    borderRadius: 8, minHeight: 40, maxWidth: 160,
   },
   channelName: { color: '#ffffff', fontSize: 14, fontWeight: '500', flexShrink: 1 },
   iconBtn: {
-    padding: 8, minHeight: 36, minWidth: 36, justifyContent: 'center', alignItems: 'center',
+    padding: 8, minHeight: 44, minWidth: 44, justifyContent: 'center', alignItems: 'center',
   },
 })
