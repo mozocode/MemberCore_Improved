@@ -1637,7 +1637,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
     )
   }
 
-  /** Member row: no macro "Paid in Full" — use Paid up / Waived / partial statuses; per-plan "Paid in full" lives in plan_balances. */
+  /** Member row: Paid up (money) vs balance satisfied (org mark); per-plan "Paid in full" lives in plan_balances and payment rows. */
   const treasuryMemberAggregateBadge = (m: MemberStatusRow) => {
     const paid = m.total_paid ?? 0
     const req = treasuryTotalRequired
@@ -1645,7 +1645,9 @@ function SettingsDues({ orgId }: { orgId: string }) {
       return <span className="px-2 py-1 rounded text-xs font-medium bg-green-500/20 text-green-400">Paid up</span>
     }
     if (m.dues_waived || (m.status === 'paid_in_full' && req > 0 && paid < req)) {
-      return <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-400">Waived</span>
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium bg-emerald-500/20 text-emerald-400">Balance satisfied</span>
+      )
     }
     return statusBadge(m.status)
   }
@@ -1813,12 +1815,12 @@ function SettingsDues({ orgId }: { orgId: string }) {
                               <Loader2 className="h-3 w-3 animate-spin" />
                             ) : m.paid_in_full ? (
                               m.dues_waived ? (
-                                'Waived'
+                                'Balance satisfied'
                               ) : (
                                 'Paid up'
                               )
                             ) : (
-                              'Waive balance'
+                              'Mark satisfied'
                             )}
                           </Button>
                         </div>
@@ -1865,32 +1867,54 @@ function SettingsDues({ orgId }: { orgId: string }) {
                                 <div className="p-3 text-sm text-zinc-500">No recorded payments for this member.</div>
                               ) : (
                                 <ul className="divide-y divide-zinc-700">
-                                  {(memberPaymentsById[m.member_id] || []).map((p) => (
-                                    <li key={p.id} className="p-3 text-sm">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <p className="text-white font-medium">${Number(p.amount || 0).toFixed(2)}</p>
-                                        <div className="flex items-center gap-2">
-                                          <p className="text-zinc-500">
-                                            {p.paid_date || (p.created_at ? new Date(p.created_at).toLocaleDateString() : '—')}
-                                          </p>
-                                          <button
-                                            type="button"
-                                            onClick={() => handleDeletePayment(m.member_id, p.id)}
-                                            disabled={deletingPaymentId === p.id}
-                                            className="text-zinc-500 hover:text-red-400 disabled:opacity-50"
-                                            title="Delete payment"
-                                          >
-                                            {deletingPaymentId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 size={13} />}
-                                          </button>
+                                  {(memberPaymentsById[m.member_id] || []).map((p) => {
+                                    const planFull =
+                                      p.plan_id &&
+                                      m.plan_balances?.some(
+                                        (row) => row.plan_id === p.plan_id && row.paid_in_full,
+                                      )
+                                    return (
+                                      <li key={p.id} className="p-3 text-sm">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-white font-medium">${Number(p.amount || 0).toFixed(2)}</p>
+                                          <div className="flex items-center gap-2">
+                                            <p className="text-zinc-500">
+                                              {p.paid_date || (p.created_at ? new Date(p.created_at).toLocaleDateString() : '—')}
+                                            </p>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeletePayment(m.member_id, p.id)}
+                                              disabled={deletingPaymentId === p.id}
+                                              className="text-zinc-500 hover:text-red-400 disabled:opacity-50"
+                                              title="Delete payment"
+                                            >
+                                              {deletingPaymentId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 size={13} />}
+                                            </button>
+                                          </div>
                                         </div>
-                                      </div>
-                                      <p className="text-zinc-400 text-xs mt-1">
-                                        {(p.payment_method || 'other').toUpperCase()}
-                                        {p.plan_name ? ` • ${p.plan_name}` : ''}
-                                        {p.notes ? ` • ${p.notes}` : ''}
-                                      </p>
-                                    </li>
-                                  ))}
+                                        <div className="text-zinc-400 text-xs mt-1 flex flex-wrap items-center gap-2">
+                                          <span>
+                                            {(p.payment_method || 'other').toUpperCase()}
+                                            {p.plan_name ? (
+                                              <>
+                                                {' '}
+                                                •{' '}
+                                                <span className="text-zinc-300">{p.plan_name}</span>
+                                              </>
+                                            ) : (
+                                              ''
+                                            )}
+                                            {p.notes ? ` • ${p.notes}` : ''}
+                                          </span>
+                                          {planFull ? (
+                                            <span className="rounded-full border border-green-500/35 bg-green-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400">
+                                              Paid in full
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </li>
+                                    )
+                                  })}
                                 </ul>
                               )}
                             </div>
@@ -1980,7 +2004,9 @@ function SettingsDues({ orgId }: { orgId: string }) {
                   onChange={(e) => setRecordForm((f) => ({ ...f, mark_paid_in_full: e.target.checked }))}
                   className="rounded border-zinc-600 bg-zinc-800"
                 />
-                <Label htmlFor="mark-paid-full" className="text-zinc-300 cursor-pointer">Waive remaining balance for this member</Label>
+                <Label htmlFor="mark-paid-full" className="text-zinc-300 cursor-pointer">
+                  Mark this member&apos;s remaining balance as satisfied (after recording this payment)
+                </Label>
               </div>
               <div className="flex gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setShowRecordModal(false)} className="flex-1 bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700">Cancel</Button>

@@ -440,9 +440,9 @@ export function SettingsPaymentsScreen({
               aggBg = 'rgba(34,197,94,0.2)'
               aggText = '#4ade80'
             } else if (m.dues_waived || (m.status === 'paid_in_full' && paid < req)) {
-              aggLabel = 'Waived'
-              aggBg = 'rgba(59,130,246,0.2)'
-              aggText = '#60a5fa'
+              aggLabel = 'Balance satisfied'
+              aggBg = 'rgba(16,185,129,0.2)'
+              aggText = '#34d399'
             }
             const displayName = memberRowDisplayName(m)
             const initial = (displayName || '?').charAt(0).toUpperCase()
@@ -469,7 +469,7 @@ export function SettingsPaymentsScreen({
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
                       <Text style={styles.markPaidBtnText}>
-                        {m.paid_in_full ? (m.dues_waived ? 'Waived' : 'Paid up') : 'Waive balance'}
+                        {m.paid_in_full ? (m.dues_waived ? 'Balance satisfied' : 'Paid up') : 'Mark satisfied'}
                       </Text>
                     )}
                   </TouchableOpacity>

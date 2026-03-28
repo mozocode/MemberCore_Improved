@@ -236,10 +236,6 @@ export function OrgDues() {
                               <span className="rounded-full border border-green-500/35 bg-green-500/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400">
                                 Paid in full
                               </span>
-                            ) : waivedNoBalance ? (
-                              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300/90">
-                                No payment due
-                              </span>
                             ) : null}
                           </div>
                           <p className="text-sm text-zinc-500">

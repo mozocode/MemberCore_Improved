@@ -181,10 +181,6 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
                       <View style={styles.paidInFullBadge}>
                         <Text style={styles.paidInFullBadgeText}>Paid in full</Text>
                       </View>
-                    ) : waivedNoBalance ? (
-                      <View style={styles.noPaymentBadge}>
-                        <Text style={styles.noPaymentBadgeText}>No payment due</Text>
-                      </View>
                     ) : null}
                   </View>
                   <Text style={styles.planAmount}>
@@ -371,21 +367,6 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  noPaymentBadge: {
-    borderWidth: 1,
-    borderColor: 'rgba(110,231,183,0.35)',
-    backgroundColor: 'rgba(16,185,129,0.12)',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  noPaymentBadgeText: {
-    color: '#6ee7b7',
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.4,
     textTransform: 'uppercase',
   },
   planAmount: {
