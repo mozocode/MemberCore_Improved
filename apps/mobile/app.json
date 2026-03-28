@@ -1,5 +1,6 @@
 {
   "expo": {
+    "newArchEnabled": false,
     "name": "MemberCore",
     "slug": "membercore",
     "version": "1.0.0",
@@ -12,6 +13,7 @@
       "backgroundColor": "#09090b"
     },
     "ios": {
+      "jsEngine": "jsc",
       "supportsTablet": true,
       "bundleIdentifier": "com.membercore.app",
       "buildNumber": "1",
@@ -49,7 +51,11 @@
     },
     "owner": "mozodev",
     "updates": {
-      "enabled": false
+      "enabled": false,
+      "url": "https://u.expo.dev/ec788f34-0bbb-4caf-abc7-b0efe8f3f83e"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
     }
   }
 }
