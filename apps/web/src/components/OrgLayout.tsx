@@ -209,7 +209,20 @@ export function OrgLayout() {
   }
 
   if (!org) {
-    return null
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center px-6 text-center gap-4">
+        <p className="text-zinc-400 text-sm max-w-sm">
+          We could not load this organization. You may have been redirected to your dashboard.
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate('/user-dashboard')}
+          className="text-white underline text-sm font-medium"
+        >
+          Go to dashboard
+        </button>
+      </div>
+    )
   }
 
   const currentPageTitle = getPageTitle(location.pathname, org.name)

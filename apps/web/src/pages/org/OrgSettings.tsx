@@ -121,12 +121,18 @@ export function OrgSettings() {
   const { orgId } = useParams<{ orgId: string }>()
   const navigate = useNavigate()
   const [role, setRole] = useState<OrgRole>('member')
+  const [roleLoading, setRoleLoading] = useState(true)
   const [_pendingCount, setPendingCount] = useState(0)
   const [billingActive, setBillingActive] = useState(true)
 
   useEffect(() => {
     if (!orgId) return
-    api.get(`/organizations/${orgId}/members/me`).then((r) => setRole((r.data.role || 'member') as OrgRole)).catch(() => setRole('member'))
+    setRoleLoading(true)
+    api
+      .get(`/organizations/${orgId}/members/me`)
+      .then((r) => setRole((r.data.role || 'member') as OrgRole))
+      .catch(() => setRole('member'))
+      .finally(() => setRoleLoading(false))
   }, [orgId])
 
   useEffect(() => {
@@ -154,7 +160,17 @@ export function OrgSettings() {
   })
 
   if (subPath) {
-    return <OrgSettingsOutlet subPath={subPath} orgId={orgId!} role={role} allSettings={allSettings} visibleSettings={visibleSettings} billingActive={billingActive} />
+    return (
+      <OrgSettingsOutlet
+        subPath={subPath}
+        orgId={orgId!}
+        role={role}
+        roleLoading={roleLoading}
+        allSettings={allSettings}
+        visibleSettings={visibleSettings}
+        billingActive={billingActive}
+      />
+    )
   }
 
   return (
@@ -189,6 +205,7 @@ function OrgSettingsOutlet({
   subPath,
   orgId,
   role,
+  roleLoading,
   billingActive,
   allSettings,
   visibleSettings: _visibleSettings,
@@ -196,6 +213,7 @@ function OrgSettingsOutlet({
   subPath: string
   orgId: string
   role: OrgRole
+  roleLoading: boolean
   billingActive: boolean
   allSettings: SettingOption[]
   visibleSettings: SettingOption[]
@@ -203,21 +221,40 @@ function OrgSettingsOutlet({
   const navigate = useNavigate()
   const option = allSettings.find((s) => s.route === subPath)
   const billingAllows = billingActive || ALLOWED_SETTINGS_WHEN_INACTIVE.has(subPath)
-  const canAccess = option && hasPermission(role, option.permission) && billingAllows
+  const canAccess = Boolean(option && hasPermission(role, option.permission) && billingAllows)
 
   useEffect(() => {
+    if (roleLoading) return
     if (subPath === 'members') {
       navigate(`/org/${orgId}/settings/club?tab=members`, { replace: true })
       return
     }
-    if (!canAccess && option) {
+    if (!option) {
+      navigate(`/org/${orgId}/settings`, { replace: true })
+      return
+    }
+    if (!canAccess) {
       navigate(`/org/${orgId}/settings`, { replace: true })
     }
-  }, [subPath, canAccess, option, orgId, navigate])
+  }, [subPath, canAccess, option, orgId, navigate, roleLoading])
 
-  if (subPath === 'members') return null
+  if (roleLoading || subPath === 'members') {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 px-6">
+        <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
+        <p className="text-zinc-500 text-sm mt-4">{subPath === 'members' ? 'Opening members…' : 'Loading settings…'}</p>
+      </div>
+    )
+  }
 
-  if (!canAccess) return null
+  if (!option || !canAccess) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 px-6 text-zinc-500 text-sm">
+        <Loader2 className="h-8 w-8 animate-spin mb-4" />
+        Redirecting to settings…
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -269,7 +306,11 @@ function SettingsPage({ subPath, orgId }: { subPath: string; orgId: string }) {
     case 'video-tutorials':
       return <SettingsVideoTutorials orgId={orgId} />
     default:
-      return null
+      return (
+        <p className="text-zinc-400 text-sm">
+          This settings section is not available. Use Back to Settings and pick another option.
+        </p>
+      )
   }
 }
 
