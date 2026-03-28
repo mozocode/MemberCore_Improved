@@ -4,7 +4,6 @@ import {
   DollarSign,
   Loader2,
   Check,
-  AlertCircle,
   CreditCard,
   Calendar,
   FileText,
@@ -13,7 +12,6 @@ import {
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
 
 interface DuesPlan {
   id: string
@@ -134,7 +132,9 @@ export function OrgDues() {
     const planTotalAmt = planTotal(customAmountPlan)
     const paidForPlan =
       status?.payment_history?.filter((p) => p.plan_id === customAmountPlan.id).reduce((s, p) => s + p.amount, 0) ?? 0
-    const remaining = isPaidInFullStatus(status) ? 0 : Math.max(0, planTotalAmt - paidForPlan)
+    const remaining = isPaidInFullStatus(status)
+      ? 0
+      : Math.max(0, planTotalAmt - paidForPlan)
     const installmentMin = customAmountPlan.amount
     const effectiveMin = Math.min(installmentMin, remaining)
 
@@ -160,8 +160,9 @@ export function OrgDues() {
 
   const planTotal = (p: DuesPlan) => (p.total_amount != null ? p.total_amount : p.amount) || 0
   const totalRequired = status?.plans?.reduce((s, p) => s + planTotal(p), 0) ?? 0
-  const paidInFull = isPaidInFullStatus(status)
-  const displayRemaining = paidInFull ? 0 : Math.max(0, totalRequired - (status?.total_paid ?? 0))
+  /** Org/admin marked member satisfied — $0 balance owed, but not the same as each plan being paid in full. */
+  const waivedNoBalance = isPaidInFullStatus(status)
+  const displayRemaining = waivedNoBalance ? 0 : Math.max(0, totalRequired - (status?.total_paid ?? 0))
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -176,8 +177,8 @@ export function OrgDues() {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Status summary */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          {/* Summary: amounts only — paid-in-full is per plan below (not a single macro status). */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-4">
               <div className="flex items-center gap-2 text-zinc-400 text-sm mb-1">
                 <DollarSign size={16} />
@@ -201,33 +202,12 @@ export function OrgDues() {
                 ${displayRemaining.toFixed(2)}
               </div>
             </div>
-            <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-4">
-              <div className="flex items-center gap-2 text-zinc-400 text-sm mb-1">
-                {paidInFull || status?.status === 'paid' ? (
-                  <Check size={16} className="text-green-500" />
-                ) : (
-                  <AlertCircle size={16} className="text-amber-500" />
-                )}
-                Status
-              </div>
-              <div
-                className={cn(
-                  'text-lg font-medium',
-                  paidInFull || status?.status === 'paid' ? 'text-green-400' : 'text-amber-400',
-                )}
-              >
-                {paidInFull
-                  ? 'Paid In Full'
-                  : status?.status === 'paid'
-                    ? 'Paid'
-                    : status?.status === 'partial'
-                      ? 'Partial'
-                      : status?.status === 'pending'
-                        ? 'Pending'
-                        : 'No dues'}
-              </div>
-            </div>
           </div>
+          {waivedNoBalance && displayRemaining === 0 && (status?.total_paid ?? 0) < totalRequired && totalRequired > 0 ? (
+            <p className="text-sm text-zinc-400">
+              Your organization marked your balance as satisfied. Amounts above are for your records; you do not need to pay the remaining total.
+            </p>
+          ) : null}
 
           {/* Plans */}
           {status?.plans && status.plans.length > 0 && (
@@ -240,8 +220,10 @@ export function OrgDues() {
                 {status.plans.map((plan) => {
                   const planTotalAmt = planTotal(plan)
                   const paidForPlan = status.payment_history?.filter((p) => p.plan_id === plan.id).reduce((s, p) => s + p.amount, 0) ?? 0
-                  const remaining = paidInFull ? 0 : Math.max(0, planTotalAmt - paidForPlan)
-                  const isPaid = paidInFull || paidForPlan >= planTotalAmt
+                  const remainingByPlan = Math.max(0, planTotalAmt - paidForPlan)
+                  const planPaidInFull = paidForPlan >= planTotalAmt && planTotalAmt > 0
+                  const remaining = waivedNoBalance ? 0 : remainingByPlan
+                  const noPayNeeded = planPaidInFull || waivedNoBalance
                   return (
                     <div key={plan.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-lg bg-zinc-900 border border-zinc-700 gap-3">
                       <div className="flex items-center gap-3 min-w-0">
@@ -256,7 +238,7 @@ export function OrgDues() {
                             {plan.total_amount != null ? ` • $${plan.total_amount.toFixed(2)} total` : ''}
                             {plan.due_date && ` • Due ${new Date(plan.due_date).toLocaleDateString()}`}
                           </p>
-                          {!isPaid && (
+                          {!noPayNeeded && (
                             <p className="text-xs text-zinc-400 mt-0.5">
                               {plan.payment_option === 'custom_only' && (
                                 <span>Minimum: ${plan.amount.toFixed(2)} • </span>
@@ -267,10 +249,15 @@ export function OrgDues() {
                         </div>
                       </div>
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full sm:w-auto">
-                        {isPaid ? (
-                          <span className="inline-flex items-center gap-1 text-green-400 text-sm">
+                        {planPaidInFull ? (
+                          <span className="inline-flex items-center gap-1 text-green-400 text-sm font-medium">
                             <Check size={16} />
-                            Paid
+                            Paid in full
+                          </span>
+                        ) : waivedNoBalance ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-400/90 text-sm">
+                            <Check size={16} />
+                            No payment due
                           </span>
                         ) : plan.payment_option === 'custom_only' ? (
                           <Button

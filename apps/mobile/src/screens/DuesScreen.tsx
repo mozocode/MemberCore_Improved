@@ -16,29 +16,6 @@ import { formatCurrency, formatDate } from '@membercore/core'
 import { duesService } from '@membercore/services'
 import type { OrgDrawerScreenProps } from '../navigation/types'
 
-/** API uses snake_case (e.g. paid_in_full); show Title Case without underscores. */
-function formatDuesStatusLabel(raw: string | undefined): string {
-  const key = (raw || 'none').toLowerCase()
-  switch (key) {
-    case 'paid_in_full':
-      return 'Paid In Full'
-    case 'paid':
-      return 'Paid'
-    case 'partial':
-      return 'Partial'
-    case 'pending':
-      return 'Pending'
-    case 'none':
-      return 'No Dues'
-    default:
-      if (!raw) return 'Pending'
-      return raw
-        .split('_')
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-        .join(' ')
-  }
-}
-
 export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
   const { orgId } = route.params
   const [status, setStatus] = useState<DuesStatus | null>(null)
@@ -68,12 +45,13 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
     async (plan: DuesPlan) => {
       try {
         const total = plan.total_amount || plan.amount
-        const markedFull =
+        const paidForPlan =
+          status?.payment_history?.filter((p) => p.plan_id === plan.id).reduce((s, p) => s + p.amount, 0) ?? 0
+        const waived =
           status?.dues_paid_in_full === true ||
           (status?.status || '').toLowerCase().trim() === 'paid_in_full'
-        const remaining = markedFull
-          ? 0
-          : Math.max(0, total - (status?.total_paid || 0))
+        const remainingByPlan = Math.max(0, total - paidForPlan)
+        const remaining = waived ? 0 : remainingByPlan
         const amount =
           plan.payment_option === 'custom_only' ? remaining * 0.5 : remaining
         const res = await duesService.checkout(orgId, plan.id, amount)
@@ -112,14 +90,12 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
     (sum, p) => sum + (p.total_amount || p.amount),
     0,
   )
-  const paidInFull =
+  const waivedNoBalance =
     status.dues_paid_in_full === true ||
     (status.status || '').toLowerCase().trim() === 'paid_in_full'
-  const totalRemaining = paidInFull
+  const totalRemaining = waivedNoBalance
     ? 0
     : Math.max(0, totalRequired - status.total_paid)
-  const isPaid = status.status === 'paid' || paidInFull
-  const statusLabel = formatDuesStatusLabel(status.status)
 
   return (
     <View style={styles.container}>
@@ -167,30 +143,16 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
               {formatCurrency(totalRemaining)}
             </Text>
           </View>
-
-          {/* Status */}
-          <View style={styles.summaryCard}>
-            <View style={styles.summaryIconRow}>
-              <Feather
-                name={isPaid ? 'check' : 'alert-circle'}
-                size={14}
-                color="#a1a1aa"
-              />
-              <Text style={styles.summaryLabel}>Status</Text>
-            </View>
-            <Text
-              style={[
-                styles.summaryStatusValue,
-                { color: isPaid ? '#22c55e' : '#f59e0b' },
-              ]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.72}
-            >
-              {statusLabel}
-            </Text>
-          </View>
         </View>
+
+        {waivedNoBalance &&
+        totalRemaining === 0 &&
+        status.total_paid < totalRequired &&
+        totalRequired > 0 ? (
+          <Text style={styles.waiverNote}>
+            Your organization marked your balance as satisfied. You do not need to pay the remaining total.
+          </Text>
+        ) : null}
 
         {/* Dues Plans */}
         <View style={styles.sectionHeader}>
@@ -200,9 +162,12 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
 
         {status.plans.map((plan) => {
           const total = plan.total_amount || plan.amount
-          const remaining = paidInFull
-            ? 0
-            : Math.max(0, total - (status.total_paid || 0))
+          const paidForPlan =
+            status.payment_history?.filter((p) => p.plan_id === plan.id).reduce((s, p) => s + p.amount, 0) ?? 0
+          const remainingByPlan = Math.max(0, total - paidForPlan)
+          const planPaidInFull = paidForPlan >= total && total > 0
+          const remaining = waivedNoBalance ? 0 : remainingByPlan
+          const noPayNeeded = planPaidInFull || waivedNoBalance
           return (
             <View key={plan.id} style={styles.planCard}>
               <View style={styles.planHeader}>
@@ -219,14 +184,18 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
                       Due: {formatDate(plan.due_date)}
                     </Text>
                   )}
-                  {remaining > 0 && (
+                  {planPaidInFull ? (
+                    <Text style={styles.planPaidInFull}>Paid in full</Text>
+                  ) : waivedNoBalance ? (
+                    <Text style={styles.planWaived}>No payment due</Text>
+                  ) : remaining > 0 ? (
                     <Text style={styles.planRemaining}>
                       Remaining: {formatCurrency(remaining)}
                     </Text>
-                  )}
+                  ) : null}
                 </View>
               </View>
-              {remaining > 0 && (
+              {!noPayNeeded && remaining > 0 ? (
                 <TouchableOpacity
                   style={styles.payButton}
                   onPress={() => handlePay(plan)}
@@ -237,7 +206,7 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
                       : `Pay ${formatCurrency(remaining)}`}
                   </Text>
                 </TouchableOpacity>
-              )}
+              ) : null}
             </View>
           )
         })}
@@ -325,10 +294,11 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '600',
   },
-  /** Status chip: smaller so labels like "Paid In Full" stay on one line in the 2-column grid. */
-  summaryStatusValue: {
-    fontSize: 15,
-    fontWeight: '600',
+  waiverNote: {
+    color: '#a1a1aa',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 20,
   },
 
   /* Section Headers */
@@ -386,6 +356,18 @@ const styles = StyleSheet.create({
   },
   planRemaining: {
     color: '#f59e0b',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  planPaidInFull: {
+    color: '#4ade80',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  planWaived: {
+    color: '#6ee7b7',
     fontSize: 13,
     fontWeight: '500',
     marginTop: 2,
