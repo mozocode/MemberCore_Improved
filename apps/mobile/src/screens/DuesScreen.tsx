@@ -68,7 +68,12 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
     async (plan: DuesPlan) => {
       try {
         const total = plan.total_amount || plan.amount
-        const remaining = total - (status?.total_paid || 0)
+        const markedFull =
+          status?.dues_paid_in_full === true ||
+          (status?.status || '').toLowerCase().trim() === 'paid_in_full'
+        const remaining = markedFull
+          ? 0
+          : Math.max(0, total - (status?.total_paid || 0))
         const amount =
           plan.payment_option === 'custom_only' ? remaining * 0.5 : remaining
         const res = await duesService.checkout(orgId, plan.id, amount)
@@ -107,7 +112,9 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
     (sum, p) => sum + (p.total_amount || p.amount),
     0,
   )
-  const paidInFull = status.status === 'paid_in_full'
+  const paidInFull =
+    status.dues_paid_in_full === true ||
+    (status.status || '').toLowerCase().trim() === 'paid_in_full'
   const totalRemaining = paidInFull
     ? 0
     : Math.max(0, totalRequired - status.total_paid)

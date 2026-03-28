@@ -230,4 +230,9 @@ def run_dues_reminders(db, org_id: str) -> Dict[str, Any]:
         f"{stats['emails_sent']} email(s) sent, "
         f"{stats['in_app_notifications_created']} in-app notification(s) created."
     )
+    if stats.get("emails_failed", 0) > 0:
+        stats["message"] += (
+            f" {stats['emails_failed']} email(s) could not be sent "
+            "(same Resend setup as password reset — check server logs or Resend dashboard)."
+        )
     return stats

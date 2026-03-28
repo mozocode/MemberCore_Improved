@@ -144,6 +144,7 @@ def get_my_dues_status(
 
     return {
         "status": status,
+        "dues_paid_in_full": dues_paid_in_full,
         "total_paid": total_paid,
         "plans": plans,
         "payment_history": payments,

@@ -36,10 +36,17 @@ interface Payment {
 
 interface DuesStatus {
   status: string
+  dues_paid_in_full?: boolean
   total_paid: number
   plans: DuesPlan[]
   payment_history: Payment[]
   member_id: string | null
+}
+
+function isPaidInFullStatus(s: DuesStatus | null): boolean {
+  if (!s) return false
+  if (s.dues_paid_in_full === true) return true
+  return (s.status || '').toLowerCase().trim() === 'paid_in_full'
 }
 
 export function OrgDues() {
@@ -84,7 +91,9 @@ export function OrgDues() {
             fetchStatus().then((updated) => {
               const totalRequired = updated?.plans?.reduce((s, p) => s + (p.total_amount ?? p.amount ?? 0), 0) ?? 0
               const totalPaid = updated?.total_paid ?? 0
-              const remaining = Math.max(0, totalRequired - totalPaid)
+              const remaining = isPaidInFullStatus(updated)
+                ? 0
+                : Math.max(0, totalRequired - totalPaid)
               setSuccessMessage(`Payment successful. Remaining balance: $${remaining.toFixed(2)}`)
               setTimeout(() => setSuccessMessage(null), 6000)
             })
@@ -125,7 +134,7 @@ export function OrgDues() {
     const planTotalAmt = planTotal(customAmountPlan)
     const paidForPlan =
       status?.payment_history?.filter((p) => p.plan_id === customAmountPlan.id).reduce((s, p) => s + p.amount, 0) ?? 0
-    const remaining = Math.max(0, planTotalAmt - paidForPlan)
+    const remaining = isPaidInFullStatus(status) ? 0 : Math.max(0, planTotalAmt - paidForPlan)
     const installmentMin = customAmountPlan.amount
     const effectiveMin = Math.min(installmentMin, remaining)
 
@@ -151,10 +160,8 @@ export function OrgDues() {
 
   const planTotal = (p: DuesPlan) => (p.total_amount != null ? p.total_amount : p.amount) || 0
   const totalRequired = status?.plans?.reduce((s, p) => s + planTotal(p), 0) ?? 0
-  const displayRemaining =
-    status?.status === 'paid_in_full'
-      ? 0
-      : Math.max(0, totalRequired - (status?.total_paid ?? 0))
+  const paidInFull = isPaidInFullStatus(status)
+  const displayRemaining = paidInFull ? 0 : Math.max(0, totalRequired - (status?.total_paid ?? 0))
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -196,7 +203,7 @@ export function OrgDues() {
             </div>
             <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-4">
               <div className="flex items-center gap-2 text-zinc-400 text-sm mb-1">
-                {status?.status === 'paid_in_full' || status?.status === 'paid' ? (
+                {paidInFull || status?.status === 'paid' ? (
                   <Check size={16} className="text-green-500" />
                 ) : (
                   <AlertCircle size={16} className="text-amber-500" />
@@ -206,10 +213,10 @@ export function OrgDues() {
               <div
                 className={cn(
                   'text-lg font-medium',
-                  status?.status === 'paid_in_full' || status?.status === 'paid' ? 'text-green-400' : 'text-amber-400',
+                  paidInFull || status?.status === 'paid' ? 'text-green-400' : 'text-amber-400',
                 )}
               >
-                {status?.status === 'paid_in_full'
+                {paidInFull
                   ? 'Paid In Full'
                   : status?.status === 'paid'
                     ? 'Paid'
@@ -233,8 +240,8 @@ export function OrgDues() {
                 {status.plans.map((plan) => {
                   const planTotalAmt = planTotal(plan)
                   const paidForPlan = status.payment_history?.filter((p) => p.plan_id === plan.id).reduce((s, p) => s + p.amount, 0) ?? 0
-                  const remaining = Math.max(0, planTotalAmt - paidForPlan)
-                  const isPaid = paidForPlan >= planTotalAmt || status?.status === 'paid_in_full'
+                  const remaining = paidInFull ? 0 : Math.max(0, planTotalAmt - paidForPlan)
+                  const isPaid = paidInFull || paidForPlan >= planTotalAmt
                   return (
                     <div key={plan.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-lg bg-zinc-900 border border-zinc-700 gap-3">
                       <div className="flex items-center gap-3 min-w-0">

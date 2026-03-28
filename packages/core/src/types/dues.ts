@@ -18,6 +18,8 @@ export interface Payment {
 
 export interface DuesStatus {
   status: string
+  /** Admin override on the member record — when true, treat balance as satisfied regardless of totals. */
+  dues_paid_in_full?: boolean
   total_paid: number
   plans: DuesPlan[]
   payment_history: Payment[]

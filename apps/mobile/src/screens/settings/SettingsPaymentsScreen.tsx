@@ -268,12 +268,17 @@ export function SettingsPaymentsScreen({
     }
   }
 
-  // Send Reminders
+  // Send Reminders (backend sends email via Resend, optional push + in-app; see API `message`)
   const handleSendReminders = async () => {
     setRemindLoading(true)
     try {
-      await api.post(`/dues/${orgId}/remind`)
-      Alert.alert('Sent', 'Reminders have been sent to members with outstanding dues.')
+      const res = await api.post<{ message?: string; ok?: boolean }>(`/dues/${orgId}/remind`)
+      const msg =
+        typeof res.data?.message === 'string' && res.data.message.trim()
+          ? res.data.message
+          : 'Reminders processed.'
+      Alert.alert('Reminders', msg)
+      fetchTreasury()
     } catch {
       Alert.alert('Error', 'Failed to send reminders.')
     } finally {
