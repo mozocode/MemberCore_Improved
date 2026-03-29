@@ -1199,6 +1199,7 @@ interface MemberPlanBalanceRow {
   total: number
   paid: number
   paid_in_full: boolean
+  plan_marked_paid_in_full?: boolean
 }
 
 interface MemberStatusRow {
@@ -1225,6 +1226,7 @@ interface MemberPaymentRow {
   notes?: string
   plan_id?: string
   plan_name?: string
+  plan_marked_paid_in_full?: boolean
 }
 
 const PAYMENT_METHODS = [
@@ -1669,7 +1671,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
       .reduce((s, x) => s + Number(x.amount || 0), 0)
   }
 
-  /** True when this plan is fully covered (member-status row, or sum of loaded payments vs plan cap — fixes stale API or rounding). */
+  /** True when this plan is fully covered (math, per-plan treasury mark, or member-level satisfied). */
   const treasuryPlanIsPaidInFull = (member: MemberStatusRow, planId: string | undefined) => {
     if (!planId) return false
     const cap = planCapForTreasury(planId)
@@ -1898,7 +1900,9 @@ function SettingsDues({ orgId }: { orgId: string }) {
                                   {(memberPaymentsById[m.member_id] || []).map((p) => {
                                     const resolvedPlanId = resolveTreasuryPlanId(p)
                                     const planFull =
-                                      resolvedPlanId != null && treasuryPlanIsPaidInFull(m, resolvedPlanId)
+                                      resolvedPlanId != null &&
+                                      (treasuryPlanIsPaidInFull(m, resolvedPlanId) ||
+                                        p.plan_marked_paid_in_full === true)
                                     return (
                                       <li key={p.id} className="p-3 text-sm">
                                         <div className="flex items-start justify-between gap-3">
@@ -2033,7 +2037,9 @@ function SettingsDues({ orgId }: { orgId: string }) {
                   className="rounded border-zinc-600 bg-zinc-800"
                 />
                 <Label htmlFor="mark-paid-full" className="text-zinc-300 cursor-pointer">
-                  Mark this member&apos;s remaining balance as satisfied (after recording this payment)
+                  {recordForm.plan_id
+                    ? 'Mark this plan as paid in full at this amount (early-pay, promo, or agreed settlement)'
+                    : 'Mark this member&apos;s remaining balance as satisfied for all plans (after recording this payment)'}
                 </Label>
               </div>
               <div className="flex gap-2 pt-2">

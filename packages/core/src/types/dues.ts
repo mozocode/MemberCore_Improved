@@ -14,6 +14,8 @@ export interface Payment {
   payment_method: string
   plan_id?: string
   created_at: string
+  /** Set when recording manual payment with plan + paid-in-full for promos. */
+  plan_marked_paid_in_full?: boolean
 }
 
 export interface MemberPlanBalance {
@@ -22,6 +24,8 @@ export interface MemberPlanBalance {
   total: number
   paid: number
   paid_in_full: boolean
+  /** Treasury checked "paid in full" for this plan (promo / early-pay). */
+  plan_marked_paid_in_full?: boolean
 }
 
 export interface DuesStatus {

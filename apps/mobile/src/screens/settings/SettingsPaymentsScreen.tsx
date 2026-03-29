@@ -42,6 +42,7 @@ interface MemberPlanBalanceRow {
   total: number
   paid: number
   paid_in_full: boolean
+  plan_marked_paid_in_full?: boolean
 }
 
 interface MemberStatusRow {

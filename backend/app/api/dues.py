@@ -11,6 +11,45 @@ from app.core.security import get_current_user, get_current_user_id, generate_uu
 router = APIRouter()
 
 
+def _plans_marked_paid_in_full(md: dict) -> dict:
+    """Firestore map: plan_id -> True when treasury marked that plan satisfied (promo / early-pay)."""
+    raw = md.get("dues_plans_paid_in_full") or {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): bool(v) for k, v in raw.items() if v}
+
+
+def _plan_balance_row(
+    pid: str,
+    pd: dict,
+    member_payments: list,
+    plans_marked: dict,
+    marked_member: bool,
+):
+    """One plan row for member-status / my-status."""
+    cap_raw = pd.get("total_amount") if pd.get("total_amount") is not None else pd.get("amount", 0)
+    try:
+        cap = float(cap_raw) if cap_raw is not None else 0.0
+    except (TypeError, ValueError):
+        cap = 0.0
+    paid_to_plan = sum(
+        float((x.to_dict() or {}).get("amount", 0) or 0)
+        for x in member_payments
+        if (x.to_dict() or {}).get("plan_id") == pid
+    )
+    plan_marked = bool(plans_marked.get(pid))
+    math_full = cap > 0 and paid_to_plan >= cap
+    paid_full = math_full or plan_marked or (bool(marked_member) and cap > 0)
+    return {
+        "plan_id": pid,
+        "plan_name": (pd.get("name") or "Plan").strip(),
+        "total": round(cap, 2),
+        "paid": round(paid_to_plan, 2),
+        "paid_in_full": paid_full,
+        "plan_marked_paid_in_full": plan_marked,
+    }
+
+
 class CreatePlanRequest(BaseModel):
     name: str
     amount: float  # minimum/installment amount (e.g. $100/month)
@@ -94,12 +133,15 @@ def get_my_dues_status(
     )
     member_id = member_docs[0].id if member_docs else None
 
-    # Get member doc for dues_paid_in_full (manual override by org owner)
     dues_paid_in_full = False
+    member_dict = {}
     if member_id:
         member_doc = db.collection("members").document(member_id).get()
         if member_doc.exists:
-            dues_paid_in_full = member_doc.to_dict().get("dues_paid_in_full", False)
+            member_dict = member_doc.to_dict() or {}
+            dues_paid_in_full = member_dict.get("dues_paid_in_full", False)
+
+    plans_marked = _plans_marked_paid_in_full(member_dict)
 
     # Get dues plans
     plan_docs = list(
@@ -130,36 +172,18 @@ def get_my_dues_status(
 
     total_required = sum(plan_total(p) for p in plans)
 
-    # Per-plan amounts (same logic as treasury member-status) for member-facing clarity
-    plan_balances = []
-    for p in plans:
-        pid = p["id"]
-        cap_raw = plan_total(p)
-        try:
-            cap = float(cap_raw) if cap_raw is not None else 0.0
-        except (TypeError, ValueError):
-            cap = 0.0
-        paid_to_plan = sum(
-            float((x.to_dict() or {}).get("amount", 0) or 0)
-            for x in payment_docs
-            if (x.to_dict() or {}).get("plan_id") == pid
-        )
-        plan_balances.append(
-            {
-                "plan_id": pid,
-                "plan_name": (p.get("name") or "Plan").strip(),
-                "total": round(cap, 2),
-                "paid": round(paid_to_plan, 2),
-                "paid_in_full": cap > 0 and paid_to_plan >= cap,
-            }
-        )
+    plan_balances = [
+        _plan_balance_row(p["id"], p, payment_docs, plans_marked, dues_paid_in_full)
+        for p in plans
+    ]
 
-    # Status: paid_in_full only if owner manually marked OR total_paid >= total_required
+    # Status: paid_in_full if member marked, totals met, or every active plan is satisfied (incl. per-plan marks)
     status = "none"
     if total_paid > 0:
         status = "paid"
     if plans and total_required > 0:
-        if dues_paid_in_full or total_paid >= total_required:
+        every_plan_ok = plan_balances and all(row["paid_in_full"] for row in plan_balances)
+        if dues_paid_in_full or total_paid >= total_required or every_plan_ok:
             status = "paid_in_full"
         elif total_paid > 0 and total_paid < total_required:
             status = "partial"
@@ -410,9 +434,20 @@ def get_treasury_stats(
         member_payments = [p for p in payment_docs if p.to_dict().get("member_id") == mid]
         total_paid = sum(p.to_dict().get("amount", 0) for p in member_payments)
         marked_full = md.get("dues_paid_in_full", False)
+        plans_marked = _plans_marked_paid_in_full(md)
+        per_plan = []
+        for pdoc in plan_docs:
+            pd = pdoc.to_dict()
+            pid = pdoc.id
+            per_plan.append(_plan_balance_row(pid, pd, member_payments, plans_marked, marked_full))
         if total_paid > 0:
             paid_count += 1
-        if marked_full or (total_required > 0 and total_paid >= total_required):
+        if not plan_docs:
+            fully_satisfied = bool(marked_full)
+        else:
+            every_plan_ok = all(p["paid_in_full"] for p in per_plan)
+            fully_satisfied = marked_full or (total_required > 0 and total_paid >= total_required) or every_plan_ok
+        if fully_satisfied:
             paid_in_full_count += 1
         elif total_required > 0 and total_paid < total_required and total_paid > 0:
             pending_count += 1
@@ -470,7 +505,18 @@ def get_member_status(
         member_payments = [p for p in payment_docs if p.to_dict().get("member_id") == mid]
         total_paid = sum(p.to_dict().get("amount", 0) for p in member_payments)
         marked_full = md.get("dues_paid_in_full", False)
-        if marked_full or (total_required > 0 and total_paid >= total_required):
+        plans_marked = _plans_marked_paid_in_full(md)
+        per_plan = []
+        for pdoc in plan_docs:
+            pd = pdoc.to_dict()
+            pid = pdoc.id
+            per_plan.append(_plan_balance_row(pid, pd, member_payments, plans_marked, marked_full))
+        if not plan_docs:
+            paid_in_full_member = bool(marked_full)
+        else:
+            every_plan_ok = all(p["paid_in_full"] for p in per_plan)
+            paid_in_full_member = marked_full or (total_required > 0 and total_paid >= total_required) or every_plan_ok
+        if paid_in_full_member:
             status = "paid_in_full"
         elif total_paid > 0:
             status = "paid"
@@ -485,24 +531,6 @@ def get_member_status(
             user_name = ud.get("name") or ud.get("email") or "Unknown"
             user_email = ud.get("email") or ""
             user_avatar = ud.get("avatar")
-        per_plan = []
-        for pdoc in plan_docs:
-            pd = pdoc.to_dict()
-            pid = pdoc.id
-            cap_raw = plan_total(pdoc)
-            cap = float(cap_raw) if cap_raw is not None else 0.0
-            paid_to_plan = sum(
-                float((x.to_dict() or {}).get("amount", 0) or 0)
-                for x in member_payments
-                if (x.to_dict() or {}).get("plan_id") == pid
-            )
-            per_plan.append({
-                "plan_id": pid,
-                "plan_name": (pd.get("name") or "Plan").strip(),
-                "total": round(cap, 2),
-                "paid": round(paid_to_plan, 2),
-                "paid_in_full": cap > 0 and paid_to_plan >= cap,
-            })
         out.append({
             "member_id": mid,
             "user_id": uid,
@@ -512,7 +540,7 @@ def get_member_status(
             "nickname": md.get("nickname"),
             "title": md.get("title"),
             "total_paid": round(total_paid, 2),
-            "paid_in_full": marked_full or (total_required > 0 and total_paid >= total_required),
+            "paid_in_full": paid_in_full_member,
             "dues_waived": bool(marked_full),
             "status": status,
             "plan_balances": per_plan,
@@ -560,6 +588,7 @@ def get_member_payment_history(
             "notes": d.get("notes"),
             "plan_id": d.get("plan_id"),
             "plan_name": plan_names.get(d.get("plan_id")) if d.get("plan_id") else None,
+            "plan_marked_paid_in_full": bool(d.get("plan_marked_paid_in_full")),
         })
 
     def _sort_key(row):
@@ -625,7 +654,7 @@ def record_manual_payment(
     now = datetime.now(timezone.utc)
     paid_date = req.paid_date or now.strftime("%Y-%m-%d")
     payment_id = generate_uuid()
-    db.collection("payments").document(payment_id).set({
+    pay_payload = {
         "id": payment_id,
         "organization_id": org_id,
         "member_id": req.member_id,
@@ -636,8 +665,17 @@ def record_manual_payment(
         "paid_date": paid_date,
         "recorded_by": user["id"],
         "created_at": now,
-    })
-    if req.mark_paid_in_full:
+    }
+    if req.mark_paid_in_full and req.plan_id:
+        pay_payload["plan_marked_paid_in_full"] = True
+    db.collection("payments").document(payment_id).set(pay_payload)
+
+    if req.mark_paid_in_full and req.plan_id:
+        member_ref.update({
+            f"dues_plans_paid_in_full.{req.plan_id}": True,
+            "updated_at": now,
+        })
+    elif req.mark_paid_in_full:
         member_ref.update({"dues_paid_in_full": True, "updated_at": now})
     return {"id": payment_id, "ok": True}
 
