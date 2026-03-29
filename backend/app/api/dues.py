@@ -24,7 +24,6 @@ def _plan_balance_row(
     pd: dict,
     member_payments: list,
     plans_marked: dict,
-    marked_member: bool,
 ):
     """One plan row for member-status / my-status."""
     cap_raw = pd.get("total_amount") if pd.get("total_amount") is not None else pd.get("amount", 0)
@@ -39,7 +38,7 @@ def _plan_balance_row(
     )
     plan_marked = bool(plans_marked.get(pid))
     math_full = cap > 0 and paid_to_plan >= cap
-    paid_full = math_full or plan_marked or (bool(marked_member) and cap > 0)
+    paid_full = math_full or plan_marked
     return {
         "plan_id": pid,
         "plan_name": (pd.get("name") or "Plan").strip(),
@@ -172,10 +171,7 @@ def get_my_dues_status(
 
     total_required = sum(plan_total(p) for p in plans)
 
-    plan_balances = [
-        _plan_balance_row(p["id"], p, payment_docs, plans_marked, dues_paid_in_full)
-        for p in plans
-    ]
+    plan_balances = [_plan_balance_row(p["id"], p, payment_docs, plans_marked) for p in plans]
 
     # Status: paid_in_full if member marked, totals met, or every active plan is satisfied (incl. per-plan marks)
     status = "none"
@@ -439,7 +435,7 @@ def get_treasury_stats(
         for pdoc in plan_docs:
             pd = pdoc.to_dict()
             pid = pdoc.id
-            per_plan.append(_plan_balance_row(pid, pd, member_payments, plans_marked, marked_full))
+            per_plan.append(_plan_balance_row(pid, pd, member_payments, plans_marked))
         if total_paid > 0:
             paid_count += 1
         if not plan_docs:
@@ -510,7 +506,7 @@ def get_member_status(
         for pdoc in plan_docs:
             pd = pdoc.to_dict()
             pid = pdoc.id
-            per_plan.append(_plan_balance_row(pid, pd, member_payments, plans_marked, marked_full))
+            per_plan.append(_plan_balance_row(pid, pd, member_payments, plans_marked))
         if not plan_docs:
             paid_in_full_member = bool(marked_full)
         else:
@@ -622,7 +618,35 @@ def delete_payment_record(
     if pd.get("organization_id") != org_id:
         raise HTTPException(status_code=404, detail="Payment not found")
 
+    member_id = pd.get("member_id")
+    plan_id = pd.get("plan_id")
+    was_plan_marked = bool(pd.get("plan_marked_paid_in_full"))
     pay_ref.delete()
+
+    # If this payment carried the per-plan mark, clear member map only when no other
+    # marked payment remains for that same member+plan.
+    if was_plan_marked and member_id and plan_id:
+        member_ref = db.collection("members").document(member_id)
+        member_doc = member_ref.get()
+        if member_doc.exists:
+            remaining_marked = list(
+                db.collection("payments")
+                .where("organization_id", "==", org_id)
+                .where("member_id", "==", member_id)
+                .where("plan_id", "==", plan_id)
+                .where("plan_marked_paid_in_full", "==", True)
+                .limit(1)
+                .stream()
+            )
+            if not remaining_marked:
+                md = member_doc.to_dict() or {}
+                marks = _plans_marked_paid_in_full(md)
+                if plan_id in marks:
+                    marks.pop(plan_id, None)
+                    member_ref.update({
+                        "dues_plans_paid_in_full": marks,
+                        "updated_at": datetime.now(timezone.utc),
+                    })
     return {"ok": True, "id": payment_id}
 
 

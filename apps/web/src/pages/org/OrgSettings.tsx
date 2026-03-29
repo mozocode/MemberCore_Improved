@@ -1561,13 +1561,13 @@ function SettingsDues({ orgId }: { orgId: string }) {
       return
     }
     setExpandedMemberId(memberId)
-    if (memberPaymentsById[memberId]) return
+    if (Object.prototype.hasOwnProperty.call(memberPaymentsById, memberId)) return
     setMemberPaymentsLoadingId(memberId)
     try {
       const res = await api.get(`/dues/${orgId}/members/${memberId}/payments`)
       setMemberPaymentsById((prev) => ({ ...prev, [memberId]: Array.isArray(res.data) ? res.data : [] }))
     } catch {
-      setMemberPaymentsById((prev) => ({ ...prev, [memberId]: [] }))
+      setPaymentListError('Failed to load member payments')
     } finally {
       setMemberPaymentsLoadingId(null)
     }
