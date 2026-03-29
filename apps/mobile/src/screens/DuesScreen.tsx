@@ -96,6 +96,10 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
   const totalRemaining = waivedNoBalance
     ? 0
     : Math.max(0, totalRequired - status.total_paid)
+  const orgClearedButUnderpaid =
+    status.dues_paid_in_full === true &&
+    totalRequired > 0 &&
+    status.total_paid < totalRequired
 
   return (
     <View style={styles.container}>
@@ -145,13 +149,12 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
           </View>
         </View>
 
-        {waivedNoBalance &&
-        totalRemaining === 0 &&
-        status.total_paid < totalRequired &&
-        totalRequired > 0 ? (
-          <Text style={styles.waiverNote}>
-            Your organization marked your balance as satisfied. You do not need to pay the remaining total.
-          </Text>
+        {orgClearedButUnderpaid ? (
+          <View style={styles.orgNotice}>
+            <Text style={styles.orgNoticeText}>
+              Your organization is not requesting further payment from you. Per-plan totals below show what has been recorded toward each plan.
+            </Text>
+          </View>
         ) : null}
 
         {/* Dues Plans */}
@@ -161,11 +164,15 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
         </View>
 
         {status.plans.map((plan) => {
-          const total = plan.total_amount || plan.amount
+          const row = status.plan_balances?.find((r) => r.plan_id === plan.id)
+          const total = row != null ? row.total : (plan.total_amount || plan.amount)
           const paidForPlan =
-            status.payment_history?.filter((p) => p.plan_id === plan.id).reduce((s, p) => s + p.amount, 0) ?? 0
+            row != null
+              ? row.paid
+              : status.payment_history?.filter((p) => p.plan_id === plan.id).reduce((s, p) => s + p.amount, 0) ?? 0
           const remainingByPlan = Math.max(0, total - paidForPlan)
-          const planPaidInFull = paidForPlan >= total && total > 0
+          const planPaidInFull =
+            row != null ? row.paid_in_full : paidForPlan >= total && total > 0
           const remaining = waivedNoBalance ? 0 : remainingByPlan
           const noPayNeeded = planPaidInFull || waivedNoBalance
           return (
@@ -186,6 +193,11 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
                   <Text style={styles.planAmount}>
                     Total: {formatCurrency(total)}
                   </Text>
+                  {total > 0 ? (
+                    <Text style={styles.planRecorded}>
+                      Recorded toward this plan: {formatCurrency(paidForPlan)} of {formatCurrency(total)}
+                    </Text>
+                  ) : null}
                   {plan.due_date && (
                     <Text style={styles.planDue}>
                       Due: {formatDate(plan.due_date)}
@@ -222,21 +234,27 @@ export function DuesScreen({ route }: OrgDrawerScreenProps<'Dues'>) {
               <Text style={styles.sectionTitle}>Payment History</Text>
             </View>
 
-            {status.payment_history.map((p: Payment) => (
-              <View key={p.id} style={styles.historyRow}>
-                <View>
-                  <Text style={styles.historyAmount}>
-                    {formatCurrency(p.amount)}
-                  </Text>
-                  <Text style={styles.historyMethod}>
-                    via {p.payment_method === 'stripe' ? 'Stripe' : (p.payment_method || 'Stripe')}
+            {status.payment_history.map((p: Payment) => {
+              const planName = p.plan_id
+                ? status.plans.find((pl) => pl.id === p.plan_id)?.name
+                : undefined
+              return (
+                <View key={p.id} style={styles.historyRow}>
+                  <View style={styles.historyLeft}>
+                    <Text style={styles.historyAmount}>
+                      {formatCurrency(p.amount)}
+                    </Text>
+                    <Text style={styles.historyMethod}>
+                      via {p.payment_method === 'stripe' ? 'Stripe' : (p.payment_method || 'other')}
+                      {planName ? ` · ${planName}` : ''}
+                    </Text>
+                  </View>
+                  <Text style={styles.historyDate}>
+                    {formatDate(p.created_at)}
                   </Text>
                 </View>
-                <Text style={styles.historyDate}>
-                  {formatDate(p.created_at)}
-                </Text>
-              </View>
-            ))}
+              )
+            })}
           </>
         )}
       </ScrollView>
@@ -297,11 +315,19 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '600',
   },
-  waiverNote: {
-    color: '#a1a1aa',
+  orgNotice: {
+    borderWidth: 1,
+    borderColor: 'rgba(82,82,91,0.6)',
+    backgroundColor: 'rgba(39,39,42,0.45)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 20,
+  },
+  orgNoticeText: {
+    color: '#d4d4d8',
     fontSize: 13,
     lineHeight: 18,
-    marginBottom: 20,
   },
 
   /* Section Headers */
@@ -373,6 +399,11 @@ const styles = StyleSheet.create({
     color: '#a1a1aa',
     fontSize: 13,
   },
+  planRecorded: {
+    color: '#a1a1aa',
+    fontSize: 12,
+    marginTop: 6,
+  },
   planDue: {
     color: '#a1a1aa',
     fontSize: 13,
@@ -398,6 +429,11 @@ const styles = StyleSheet.create({
   },
 
   /* Payment History */
+  historyLeft: {
+    flex: 1,
+    marginRight: 8,
+    minWidth: 0,
+  },
   historyRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

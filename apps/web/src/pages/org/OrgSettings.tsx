@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { useParams, useNavigate, useLocation, useSearchParams, Link } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { hasPermission, type OrgRole } from '@/lib/permissions'
@@ -1611,11 +1611,6 @@ function SettingsDues({ orgId }: { orgId: string }) {
     }
   }
 
-  const treasuryTotalRequired = useMemo(
-    () => plans.reduce((s, p) => s + Number(p.total_amount ?? p.amount ?? 0), 0),
-    [plans],
-  )
-
   const statusBadge = (status: string) => {
     const map: Record<string, string> = {
       paid_in_full: 'bg-blue-500/20 text-blue-400',
@@ -1637,17 +1632,10 @@ function SettingsDues({ orgId }: { orgId: string }) {
     )
   }
 
-  /** Member row: Paid up (money) vs balance satisfied (org mark); per-plan "Paid in full" lives in plan_balances and payment rows. */
+  /** Member row: single "Paid up" when treasury considers the member complete (payments or org mark). Per-plan "Paid in full" stays in By plan + payment lines. */
   const treasuryMemberAggregateBadge = (m: MemberStatusRow) => {
-    const paid = m.total_paid ?? 0
-    const req = treasuryTotalRequired
-    if (req > 0 && paid >= req) {
+    if (m.paid_in_full) {
       return <span className="px-2 py-1 rounded text-xs font-medium bg-green-500/20 text-green-400">Paid up</span>
-    }
-    if (m.dues_waived || (m.status === 'paid_in_full' && req > 0 && paid < req)) {
-      return (
-        <span className="px-2 py-1 rounded text-xs font-medium bg-emerald-500/20 text-emerald-400">Balance satisfied</span>
-      )
     }
     return statusBadge(m.status)
   }
@@ -1814,11 +1802,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
                             {markingMemberId === m.member_id ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
                             ) : m.paid_in_full ? (
-                              m.dues_waived ? (
-                                'Balance satisfied'
-                              ) : (
-                                'Paid up'
-                              )
+                              'Paid up'
                             ) : (
                               'Mark satisfied'
                             )}

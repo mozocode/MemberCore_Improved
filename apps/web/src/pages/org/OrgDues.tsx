@@ -31,11 +31,20 @@ interface Payment {
   created_at: string
 }
 
+interface PlanBalanceRow {
+  plan_id: string
+  plan_name: string
+  total: number
+  paid: number
+  paid_in_full: boolean
+}
+
 interface DuesStatus {
   status: string
   dues_paid_in_full?: boolean
   total_paid: number
   plans: DuesPlan[]
+  plan_balances?: PlanBalanceRow[]
   payment_history: Payment[]
   member_id: string | null
 }
@@ -162,6 +171,10 @@ export function OrgDues() {
   /** Org/admin marked member satisfied — $0 balance owed, but not the same as each plan being paid in full. */
   const waivedNoBalance = isPaidInFullStatus(status)
   const displayRemaining = waivedNoBalance ? 0 : Math.max(0, totalRequired - (status?.total_paid ?? 0))
+  const orgClearedButUnderpaid =
+    status?.dues_paid_in_full === true &&
+    totalRequired > 0 &&
+    (status?.total_paid ?? 0) < totalRequired
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -202,10 +215,10 @@ export function OrgDues() {
               </div>
             </div>
           </div>
-          {waivedNoBalance && displayRemaining === 0 && (status?.total_paid ?? 0) < totalRequired && totalRequired > 0 ? (
-            <p className="text-sm text-zinc-400">
-              Your organization marked your balance as satisfied. Amounts above are for your records; you do not need to pay the remaining total.
-            </p>
+          {orgClearedButUnderpaid ? (
+            <div className="rounded-lg border border-zinc-600/50 bg-zinc-800/50 px-3 py-2.5 text-sm text-zinc-300">
+              Your organization is not requesting further payment from you. Per-plan totals below show what has been recorded toward each plan.
+            </div>
           ) : null}
 
           {/* Plans */}
@@ -217,10 +230,15 @@ export function OrgDues() {
               </h3>
               <div className="space-y-2">
                 {status.plans.map((plan) => {
-                  const planTotalAmt = planTotal(plan)
-                  const paidForPlan = status.payment_history?.filter((p) => p.plan_id === plan.id).reduce((s, p) => s + p.amount, 0) ?? 0
+                  const row = status.plan_balances?.find((r) => r.plan_id === plan.id)
+                  const planTotalAmt = row != null ? row.total : planTotal(plan)
+                  const paidForPlan =
+                    row != null
+                      ? row.paid
+                      : status.payment_history?.filter((p) => p.plan_id === plan.id).reduce((s, p) => s + p.amount, 0) ?? 0
                   const remainingByPlan = Math.max(0, planTotalAmt - paidForPlan)
-                  const planPaidInFull = paidForPlan >= planTotalAmt && planTotalAmt > 0
+                  const planPaidInFull =
+                    row != null ? row.paid_in_full : paidForPlan >= planTotalAmt && planTotalAmt > 0
                   const remaining = waivedNoBalance ? 0 : remainingByPlan
                   const noPayNeeded = planPaidInFull || waivedNoBalance
                   return (
@@ -244,6 +262,11 @@ export function OrgDues() {
                             {plan.total_amount != null ? ` • $${plan.total_amount.toFixed(2)} total` : ''}
                             {plan.due_date && ` • Due ${new Date(plan.due_date).toLocaleDateString()}`}
                           </p>
+                          {planTotalAmt > 0 ? (
+                            <p className="text-xs text-zinc-400 mt-1 tabular-nums">
+                              Recorded toward this plan: ${paidForPlan.toFixed(2)} of ${planTotalAmt.toFixed(2)}
+                            </p>
+                          ) : null}
                           {!noPayNeeded && (
                             <p className="text-xs text-zinc-400 mt-0.5">
                               {plan.payment_option === 'custom_only' && (
@@ -309,15 +332,25 @@ export function OrgDues() {
             <section>
               <h3 className="text-lg font-medium text-white mb-3">Payment History</h3>
               <div className="space-y-2">
-                {status.payment_history.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between p-3 rounded-lg bg-zinc-900 border border-zinc-700">
-                    <div>
-                      <span className="text-white font-medium">${p.amount.toFixed(2)}</span>
-                      <span className="text-zinc-500 text-sm ml-2">via {p.payment_method === 'stripe' ? 'Stripe' : p.payment_method}</span>
+                {status.payment_history.map((p) => {
+                  const planName = p.plan_id
+                    ? status.plans.find((pl) => pl.id === p.plan_id)?.name
+                    : undefined
+                  return (
+                    <div key={p.id} className="flex items-center justify-between p-3 rounded-lg bg-zinc-900 border border-zinc-700">
+                      <div className="min-w-0 pr-2">
+                        <span className="text-white font-medium">${p.amount.toFixed(2)}</span>
+                        <span className="text-zinc-500 text-sm ml-2">
+                          via {p.payment_method === 'stripe' ? 'Stripe' : p.payment_method}
+                          {planName ? (
+                            <span className="text-zinc-400"> · {planName}</span>
+                          ) : null}
+                        </span>
+                      </div>
+                      <span className="text-zinc-500 text-sm shrink-0">{p.created_at ? new Date(p.created_at).toLocaleDateString() : ''}</span>
                     </div>
-                    <span className="text-zinc-500 text-sm">{p.created_at ? new Date(p.created_at).toLocaleDateString() : ''}</span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </section>
           )}

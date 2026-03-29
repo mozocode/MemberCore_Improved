@@ -130,6 +130,30 @@ def get_my_dues_status(
 
     total_required = sum(plan_total(p) for p in plans)
 
+    # Per-plan amounts (same logic as treasury member-status) for member-facing clarity
+    plan_balances = []
+    for p in plans:
+        pid = p["id"]
+        cap_raw = plan_total(p)
+        try:
+            cap = float(cap_raw) if cap_raw is not None else 0.0
+        except (TypeError, ValueError):
+            cap = 0.0
+        paid_to_plan = sum(
+            float((x.to_dict() or {}).get("amount", 0) or 0)
+            for x in payment_docs
+            if (x.to_dict() or {}).get("plan_id") == pid
+        )
+        plan_balances.append(
+            {
+                "plan_id": pid,
+                "plan_name": (p.get("name") or "Plan").strip(),
+                "total": round(cap, 2),
+                "paid": round(paid_to_plan, 2),
+                "paid_in_full": cap > 0 and paid_to_plan >= cap,
+            }
+        )
+
     # Status: paid_in_full only if owner manually marked OR total_paid >= total_required
     status = "none"
     if total_paid > 0:
@@ -147,6 +171,7 @@ def get_my_dues_status(
         "dues_paid_in_full": dues_paid_in_full,
         "total_paid": total_paid,
         "plans": plans,
+        "plan_balances": plan_balances,
         "payment_history": payments,
         "member_id": member_id,
     }

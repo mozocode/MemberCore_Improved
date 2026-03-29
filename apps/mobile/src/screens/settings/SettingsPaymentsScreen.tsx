@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import {
   View,
   Text,
@@ -117,11 +117,6 @@ export function SettingsPaymentsScreen({
 
   // Terminology picker
   const [showTermPicker, setShowTermPicker] = useState(false)
-
-  const treasuryPlansTotal = useMemo(
-    () => plans.reduce((s, p) => s + (p.total_amount ?? p.amount ?? 0), 0),
-    [plans],
-  )
 
   const fetchPlans = useCallback(async () => {
     try {
@@ -431,18 +426,13 @@ export function SettingsPaymentsScreen({
           <Text style={styles.membersHeading}>Members</Text>
           {members.map((m) => {
             const paid = m.total_paid ?? 0
-            const req = treasuryPlansTotal
             let aggBg = (STATUS_COLORS[m.status] || STATUS_COLORS.pending).bg
             let aggText = (STATUS_COLORS[m.status] || STATUS_COLORS.pending).text
             let aggLabel = STATUS_LABELS[m.status] || m.status
-            if (req > 0 && paid >= req) {
+            if (m.paid_in_full) {
               aggLabel = 'Paid up'
               aggBg = 'rgba(34,197,94,0.2)'
               aggText = '#4ade80'
-            } else if (m.dues_waived || (m.status === 'paid_in_full' && paid < req)) {
-              aggLabel = 'Balance satisfied'
-              aggBg = 'rgba(16,185,129,0.2)'
-              aggText = '#34d399'
             }
             const displayName = memberRowDisplayName(m)
             const initial = (displayName || '?').charAt(0).toUpperCase()
@@ -469,7 +459,7 @@ export function SettingsPaymentsScreen({
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
                       <Text style={styles.markPaidBtnText}>
-                        {m.paid_in_full ? (m.dues_waived ? 'Balance satisfied' : 'Paid up') : 'Mark satisfied'}
+                        {m.paid_in_full ? 'Paid up' : 'Mark satisfied'}
                       </Text>
                     )}
                   </TouchableOpacity>
