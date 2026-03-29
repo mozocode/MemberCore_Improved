@@ -189,30 +189,14 @@ export function OrgDues() {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Summary: amounts only — paid-in-full is per plan below (not a single macro status). */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Summary: keep only total paid; per-plan truth lives below. */}
+          <div className="grid grid-cols-1 gap-4">
             <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-4">
               <div className="flex items-center gap-2 text-zinc-400 text-sm mb-1">
                 <DollarSign size={16} />
                 Total paid
               </div>
               <div className="text-2xl font-semibold text-white">${(status?.total_paid ?? 0).toFixed(2)}</div>
-            </div>
-            <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-4">
-              <div className="flex items-center gap-2 text-zinc-400 text-sm mb-1">
-                <FileText size={16} />
-                Required
-              </div>
-              <div className="text-2xl font-semibold text-white">${totalRequired.toFixed(2)}</div>
-            </div>
-            <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-4">
-              <div className="flex items-center gap-2 text-zinc-400 text-sm mb-1">
-                <FileText size={16} />
-                Remaining
-              </div>
-              <div className="text-2xl font-semibold text-white">
-                ${displayRemaining.toFixed(2)}
-              </div>
             </div>
           </div>
           {orgClearedButUnderpaid ? (
