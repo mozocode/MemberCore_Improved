@@ -1632,12 +1632,27 @@ function SettingsDues({ orgId }: { orgId: string }) {
     )
   }
 
-  /** Member row: single "Paid up" when treasury considers the member complete (payments or org mark). Per-plan "Paid in full" stays in By plan + payment lines. */
+  /** When complete, only the disabled "Paid up" button shows (reference: one muted control — no duplicate green pill). */
   const treasuryMemberAggregateBadge = (m: MemberStatusRow) => {
     if (m.paid_in_full) {
-      return <span className="px-2 py-1 rounded text-xs font-medium bg-green-500/20 text-green-400">Paid up</span>
+      return null
     }
     return statusBadge(m.status)
+  }
+
+  const planCapForTreasury = (planId: string) => {
+    const p = plans.find((x) => x.id === planId)
+    if (!p) return 0
+    return p.total_amount != null ? Number(p.total_amount) : Number(p.amount || 0)
+  }
+
+  const isPlanPaidInFullFromPayments = (memberId: string, planId: string | undefined) => {
+    if (!planId) return false
+    const cap = planCapForTreasury(planId)
+    if (cap <= 0) return false
+    const list = memberPaymentsById[memberId] || []
+    const paid = list.filter((x) => x.plan_id === planId).reduce((s, x) => s + Number(x.amount || 0), 0)
+    return paid >= cap
   }
 
   return (
@@ -1797,7 +1812,11 @@ function SettingsDues({ orgId }: { orgId: string }) {
                             variant="outline"
                             onClick={() => handleMarkPaidInFull(m.member_id, m.paid_in_full)}
                             disabled={markingMemberId === m.member_id || m.paid_in_full}
-                            className="text-xs bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
+                            className={
+                              m.paid_in_full
+                                ? 'text-xs border-zinc-600 bg-zinc-800 text-zinc-300 opacity-90 cursor-not-allowed hover:bg-zinc-800'
+                                : 'text-xs bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600'
+                            }
                           >
                             {markingMemberId === m.member_id ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
@@ -1824,7 +1843,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
                                         ${row.paid.toFixed(2)} / ${row.total.toFixed(2)}
                                       </span>
                                       {row.paid_in_full ? (
-                                        <span className="rounded-full border border-green-500/35 bg-green-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400">
+                                        <span className="rounded-full bg-green-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
                                           Paid in full
                                         </span>
                                       ) : (
@@ -1852,11 +1871,12 @@ function SettingsDues({ orgId }: { orgId: string }) {
                               ) : (
                                 <ul className="divide-y divide-zinc-700">
                                   {(memberPaymentsById[m.member_id] || []).map((p) => {
+                                    const rowPb = m.plan_balances?.find((row) => row.plan_id === p.plan_id)
                                     const planFull =
-                                      p.plan_id &&
-                                      m.plan_balances?.some(
-                                        (row) => row.plan_id === p.plan_id && row.paid_in_full,
-                                      )
+                                      !!p.plan_id &&
+                                      (rowPb != null
+                                        ? rowPb.paid_in_full
+                                        : isPlanPaidInFullFromPayments(m.member_id, p.plan_id))
                                     return (
                                       <li key={p.id} className="p-3 text-sm">
                                         <div className="flex items-center justify-between gap-2">
@@ -1891,7 +1911,7 @@ function SettingsDues({ orgId }: { orgId: string }) {
                                             {p.notes ? ` • ${p.notes}` : ''}
                                           </span>
                                           {planFull ? (
-                                            <span className="rounded-full border border-green-500/35 bg-green-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400">
+                                            <span className="rounded-full bg-green-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
                                               Paid in full
                                             </span>
                                           ) : null}

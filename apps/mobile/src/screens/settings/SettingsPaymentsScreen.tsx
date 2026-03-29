@@ -429,11 +429,7 @@ export function SettingsPaymentsScreen({
             let aggBg = (STATUS_COLORS[m.status] || STATUS_COLORS.pending).bg
             let aggText = (STATUS_COLORS[m.status] || STATUS_COLORS.pending).text
             let aggLabel = STATUS_LABELS[m.status] || m.status
-            if (m.paid_in_full) {
-              aggLabel = 'Paid up'
-              aggBg = 'rgba(34,197,94,0.2)'
-              aggText = '#4ade80'
-            }
+            const hideAggBadge = m.paid_in_full
             const displayName = memberRowDisplayName(m)
             const initial = (displayName || '?').charAt(0).toUpperCase()
             return (
@@ -446,11 +442,16 @@ export function SettingsPaymentsScreen({
                     <Text style={styles.memberName}>{displayName}</Text>
                     <Text style={styles.memberSub}>{m.title || `$${paid.toFixed(2)} paid`}</Text>
                   </View>
-                  <View style={[styles.statusBadge, { backgroundColor: aggBg }]}>
-                    <Text style={[styles.statusBadgeText, { color: aggText }]}>{aggLabel}</Text>
-                  </View>
+                  {!hideAggBadge ? (
+                    <View style={[styles.statusBadge, { backgroundColor: aggBg }]}>
+                      <Text style={[styles.statusBadgeText, { color: aggText }]}>{aggLabel}</Text>
+                    </View>
+                  ) : null}
                   <TouchableOpacity
-                    style={[styles.markPaidBtn, m.paid_in_full && { opacity: 0.65 }]}
+                    style={[
+                      styles.markPaidBtn,
+                      m.paid_in_full && styles.markPaidBtnDisabled,
+                    ]}
                     onPress={() => handleMarkPaidInFull(m.member_id, !!m.paid_in_full)}
                     disabled={markingMemberId === m.member_id || m.paid_in_full}
                     activeOpacity={0.7}
@@ -458,7 +459,7 @@ export function SettingsPaymentsScreen({
                     {markingMemberId === m.member_id ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Text style={styles.markPaidBtnText}>
+                      <Text style={[styles.markPaidBtnText, m.paid_in_full && { color: '#d4d4d8' }]}>
                         {m.paid_in_full ? 'Paid up' : 'Mark satisfied'}
                       </Text>
                     )}
@@ -775,15 +776,19 @@ const styles = StyleSheet.create({
   planBalanceName: { color: '#e4e4e7', fontSize: 13, fontWeight: '600', flex: 1, minWidth: 100 },
   planBalanceNums: { color: '#71717a', fontSize: 11 },
   planBalanceDue: { color: '#fbbf24', fontSize: 11, fontWeight: '600' },
-  paidInFullPill: {
+  markPaidBtnDisabled: {
+    backgroundColor: '#27272a',
     borderWidth: 1,
-    borderColor: 'rgba(74,222,128,0.4)',
-    backgroundColor: 'rgba(34,197,94,0.12)',
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    borderColor: '#52525b',
+    opacity: 0.95,
   },
-  paidInFullPillText: { color: '#4ade80', fontSize: 9, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
+  paidInFullPill: {
+    backgroundColor: '#16a34a',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  paidInFullPillText: { color: '#ffffff', fontSize: 9, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
