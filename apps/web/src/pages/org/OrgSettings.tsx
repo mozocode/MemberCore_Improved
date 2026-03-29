@@ -1833,6 +1833,21 @@ function SettingsDues({ orgId }: { orgId: string }) {
                           </div>
                         </button>
                         <div className="flex items-center gap-2 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => toggleMemberPayments(m.member_id)}
+                            disabled={memberPaymentsLoadingId === m.member_id}
+                            className="text-xs bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
+                          >
+                            {memberPaymentsLoadingId === m.member_id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : expandedMemberId === m.member_id ? (
+                              'Hide transactions'
+                            ) : (
+                              'Transactions'
+                            )}
+                          </Button>
                           {treasuryMemberAggregateBadge(m)}
                           <Button
                             size="sm"
