@@ -1646,13 +1646,38 @@ function SettingsDues({ orgId }: { orgId: string }) {
     return p.total_amount != null ? Number(p.total_amount) : Number(p.amount || 0)
   }
 
-  const isPlanPaidInFullFromPayments = (memberId: string, planId: string | undefined) => {
+  /** Match payment to plan when plan_id is missing but plan_name matches (legacy / imports). */
+  const resolveTreasuryPlanId = (p: MemberPaymentRow): string | undefined => {
+    const id = typeof p.plan_id === 'string' ? p.plan_id.trim() : ''
+    if (id) return id
+    const n = (p.plan_name || '').trim().toLowerCase()
+    if (!n) return undefined
+    return plans.find((pl) => pl.name.trim().toLowerCase() === n)?.id
+  }
+
+  const sumPaymentsForTreasuryPlan = (memberId: string, planId: string) => {
+    const plan = plans.find((x) => x.id === planId)
+    const nameMatch = plan?.name.trim().toLowerCase() ?? ''
+    const list = memberPaymentsById[memberId] || []
+    return list
+      .filter((x) => {
+        const xid = typeof x.plan_id === 'string' ? x.plan_id.trim() : ''
+        if (xid && xid === planId) return true
+        if (!xid && nameMatch && (x.plan_name || '').trim().toLowerCase() === nameMatch) return true
+        return false
+      })
+      .reduce((s, x) => s + Number(x.amount || 0), 0)
+  }
+
+  /** True when this plan is fully covered (member-status row, or sum of loaded payments vs plan cap — fixes stale API or rounding). */
+  const treasuryPlanIsPaidInFull = (member: MemberStatusRow, planId: string | undefined) => {
     if (!planId) return false
     const cap = planCapForTreasury(planId)
-    if (cap <= 0) return false
-    const list = memberPaymentsById[memberId] || []
-    const paid = list.filter((x) => x.plan_id === planId).reduce((s, x) => s + Number(x.amount || 0), 0)
-    return paid >= cap
+    const paid = sumPaymentsForTreasuryPlan(member.member_id, planId)
+    const computed = cap > 0 && Math.round(paid * 100) >= Math.round(cap * 100)
+    const row = member.plan_balances?.find((r) => r.plan_id === planId)
+    if (row != null) return row.paid_in_full || computed
+    return computed
   }
 
   return (
@@ -1871,18 +1896,37 @@ function SettingsDues({ orgId }: { orgId: string }) {
                               ) : (
                                 <ul className="divide-y divide-zinc-700">
                                   {(memberPaymentsById[m.member_id] || []).map((p) => {
-                                    const rowPb = m.plan_balances?.find((row) => row.plan_id === p.plan_id)
+                                    const resolvedPlanId = resolveTreasuryPlanId(p)
                                     const planFull =
-                                      !!p.plan_id &&
-                                      (rowPb != null
-                                        ? rowPb.paid_in_full
-                                        : isPlanPaidInFullFromPayments(m.member_id, p.plan_id))
+                                      resolvedPlanId != null && treasuryPlanIsPaidInFull(m, resolvedPlanId)
                                     return (
                                       <li key={p.id} className="p-3 text-sm">
-                                        <div className="flex items-center justify-between gap-2">
-                                          <p className="text-white font-medium">${Number(p.amount || 0).toFixed(2)}</p>
-                                          <div className="flex items-center gap-2">
-                                            <p className="text-zinc-500">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <p className="text-white font-medium tabular-nums">
+                                                ${Number(p.amount || 0).toFixed(2)}
+                                              </p>
+                                              {planFull ? (
+                                                <span className="rounded-full bg-green-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
+                                                  Paid in full
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                            <p className="text-zinc-400 text-xs mt-1">
+                                              {(p.payment_method || 'other').toUpperCase()}
+                                              {p.plan_name ? (
+                                                <>
+                                                  {' '}
+                                                  •{' '}
+                                                  <span className="text-zinc-300">{p.plan_name}</span>
+                                                </>
+                                              ) : null}
+                                              {p.notes ? ` • ${p.notes}` : ''}
+                                            </p>
+                                          </div>
+                                          <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                                            <p className="text-zinc-500 text-xs">
                                               {p.paid_date || (p.created_at ? new Date(p.created_at).toLocaleDateString() : '—')}
                                             </p>
                                             <button
@@ -1895,26 +1939,6 @@ function SettingsDues({ orgId }: { orgId: string }) {
                                               {deletingPaymentId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 size={13} />}
                                             </button>
                                           </div>
-                                        </div>
-                                        <div className="text-zinc-400 text-xs mt-1 flex flex-wrap items-center gap-2">
-                                          <span>
-                                            {(p.payment_method || 'other').toUpperCase()}
-                                            {p.plan_name ? (
-                                              <>
-                                                {' '}
-                                                •{' '}
-                                                <span className="text-zinc-300">{p.plan_name}</span>
-                                              </>
-                                            ) : (
-                                              ''
-                                            )}
-                                            {p.notes ? ` • ${p.notes}` : ''}
-                                          </span>
-                                          {planFull ? (
-                                            <span className="rounded-full bg-green-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
-                                              Paid in full
-                                            </span>
-                                          ) : null}
                                         </div>
                                       </li>
                                     )
