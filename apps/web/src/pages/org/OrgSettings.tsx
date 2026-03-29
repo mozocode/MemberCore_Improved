@@ -1837,16 +1837,18 @@ function SettingsDues({ orgId }: { orgId: string }) {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleMarkPaidInFull(m.member_id, m.paid_in_full)}
-                            disabled={markingMemberId === m.member_id || m.paid_in_full}
+                            onClick={() => handleMarkPaidInFull(m.member_id, !!m.dues_waived)}
+                            disabled={markingMemberId === m.member_id || (m.paid_in_full && !m.dues_waived)}
                             className={
-                              m.paid_in_full
+                              m.paid_in_full && !m.dues_waived
                                 ? 'text-xs border-zinc-600 bg-zinc-800 text-zinc-300 opacity-90 cursor-not-allowed hover:bg-zinc-800'
                                 : 'text-xs bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600'
                             }
                           >
                             {markingMemberId === m.member_id ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : m.dues_waived ? (
+                              'Unmark satisfied'
                             ) : m.paid_in_full ? (
                               'Paid up'
                             ) : (

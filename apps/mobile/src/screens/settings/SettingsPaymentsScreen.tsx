@@ -451,17 +451,17 @@ export function SettingsPaymentsScreen({
                   <TouchableOpacity
                     style={[
                       styles.markPaidBtn,
-                      m.paid_in_full && styles.markPaidBtnDisabled,
+                      m.paid_in_full && !m.dues_waived && styles.markPaidBtnDisabled,
                     ]}
-                    onPress={() => handleMarkPaidInFull(m.member_id, !!m.paid_in_full)}
-                    disabled={markingMemberId === m.member_id || m.paid_in_full}
+                    onPress={() => handleMarkPaidInFull(m.member_id, !!m.dues_waived)}
+                    disabled={markingMemberId === m.member_id || (!!m.paid_in_full && !m.dues_waived)}
                     activeOpacity={0.7}
                   >
                     {markingMemberId === m.member_id ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Text style={[styles.markPaidBtnText, m.paid_in_full && { color: '#d4d4d8' }]}>
-                        {m.paid_in_full ? 'Paid up' : 'Mark satisfied'}
+                      <Text style={[styles.markPaidBtnText, m.paid_in_full && !m.dues_waived && { color: '#d4d4d8' }]}>
+                        {m.dues_waived ? 'Unmark satisfied' : m.paid_in_full ? 'Paid up' : 'Mark satisfied'}
                       </Text>
                     )}
                   </TouchableOpacity>

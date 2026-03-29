@@ -37,15 +37,20 @@ def _plan_balance_row(
         if (x.to_dict() or {}).get("plan_id") == pid
     )
     plan_marked = bool(plans_marked.get(pid))
+    payment_marked = any(
+        bool((x.to_dict() or {}).get("plan_marked_paid_in_full"))
+        for x in member_payments
+        if (x.to_dict() or {}).get("plan_id") == pid
+    )
     math_full = cap > 0 and paid_to_plan >= cap
-    paid_full = math_full or plan_marked
+    paid_full = math_full or plan_marked or payment_marked
     return {
         "plan_id": pid,
         "plan_name": (pd.get("name") or "Plan").strip(),
         "total": round(cap, 2),
         "paid": round(paid_to_plan, 2),
         "paid_in_full": paid_full,
-        "plan_marked_paid_in_full": plan_marked,
+        "plan_marked_paid_in_full": plan_marked or payment_marked,
     }
 
 
@@ -675,6 +680,12 @@ def record_manual_payment(
     if not member_doc.exists or member_doc.to_dict().get("organization_id") != org_id:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    if req.mark_paid_in_full and not req.plan_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Select a plan when marking paid in full. Use 'Mark satisfied' on the member row for whole-member overrides.",
+        )
+
     now = datetime.now(timezone.utc)
     paid_date = req.paid_date or now.strftime("%Y-%m-%d")
     payment_id = generate_uuid()
@@ -699,8 +710,6 @@ def record_manual_payment(
             f"dues_plans_paid_in_full.{req.plan_id}": True,
             "updated_at": now,
         })
-    elif req.mark_paid_in_full:
-        member_ref.update({"dues_paid_in_full": True, "updated_at": now})
     return {"id": payment_id, "ok": True}
 
 
