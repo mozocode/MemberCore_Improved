@@ -30,8 +30,18 @@ def unhandled_exception_handler(request, exc):
         content={"detail": "Internal server error"},
     )
 
-# CORS: allow localhost in dev; in production set CORS_ORIGINS (comma-separated) or use default Firebase Hosting
-_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").strip().split(",")
+# CORS: allow localhost in dev and known production web hosts by default.
+# Can be overridden/extended with CORS_ORIGINS (comma-separated).
+_default_origins = ",".join(
+    [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://membercore.io",
+        "https://www.membercore.io",
+        "https://membercore-f0b3f.web.app",
+    ]
+)
+_origins = os.getenv("CORS_ORIGINS", _default_origins).strip().split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _origins if o.strip()],
