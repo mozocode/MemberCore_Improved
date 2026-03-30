@@ -79,15 +79,6 @@ def _post_event_to_chat(db, org_id: str, user_id: str, event: dict, is_update: b
     host_name, host_initial = _get_display_name_for_org_user(db, org_id, created_by)
     user_doc = db.collection("users").document(created_by).get()
     creator = user_doc.to_dict() if user_doc.exists else {}
-    cover_image = normalize_image_value(
-        req.cover_image,
-        field_label="Event cover image",
-        strict_data_url=False,
-        max_data_url_length=520_000,
-        max_dimension=1400,
-        jpeg_quality=74,
-    )
-
     event_data = {
         "id": event.get("id"),
         "title": event.get("title"),
@@ -801,6 +792,14 @@ def create_event(
 
     event_id = generate_uuid()
     now = datetime.now(timezone.utc)
+    cover_image = normalize_image_value(
+        req.cover_image,
+        field_label="Event cover image",
+        strict_data_url=False,
+        max_data_url_length=520_000,
+        max_dimension=1400,
+        jpeg_quality=74,
+    )
 
     event_data = {
         "id": event_id,
