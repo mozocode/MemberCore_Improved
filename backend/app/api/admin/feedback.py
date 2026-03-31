@@ -1,5 +1,6 @@
 """Platform Admin: List signup and trial-exit feedback from all orgs."""
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends
 
@@ -9,7 +10,7 @@ from app.core.security import require_platform_admin
 router = APIRouter(dependencies=[Depends(require_platform_admin)])
 
 
-def _timestamp_to_iso(t) -> str | None:
+def _timestamp_to_iso(t) -> Optional[str]:
     if t is None:
         return None
     if hasattr(t, "isoformat"):
