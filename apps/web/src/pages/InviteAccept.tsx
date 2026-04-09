@@ -26,6 +26,8 @@ export function InviteAccept() {
   const [formFirstName, setFormFirstName] = useState('')
   const [formLastName, setFormLastName] = useState('')
   const [formPassword, setFormPassword] = useState('')
+  const normalizedUserEmail = (user?.email || '').toLowerCase()
+  const normalizedInviteEmail = (invite?.email || '').toLowerCase()
 
   useEffect(() => {
     if (!token) {
@@ -56,7 +58,7 @@ export function InviteAccept() {
   // Must stay before any conditional returns to preserve hook order.
   useEffect(() => {
     if (!token || !invite?.existingUser || !user) return
-    if ((user.email || '').toLowerCase() !== invite.email.toLowerCase()) return
+    if (!normalizedInviteEmail || normalizedUserEmail !== normalizedInviteEmail) return
     let cancelled = false
     inviteApi
       .accept(token)
@@ -67,7 +69,7 @@ export function InviteAccept() {
     return () => {
       cancelled = true
     }
-  }, [token, invite, user, navigate])
+  }, [token, invite, user, normalizedInviteEmail, normalizedUserEmail, navigate])
 
   const handleJoin = async () => {
     if (!token || !invite) return
@@ -131,7 +133,7 @@ export function InviteAccept() {
     )
   }
 
-  const isLoggedInAsInviteEmail = user && (user.email || '').toLowerCase() === invite.email.toLowerCase()
+  const isLoggedInAsInviteEmail = !!user && !!normalizedInviteEmail && normalizedUserEmail === normalizedInviteEmail
 
   // Existing user + already signed in as this email → one-click Join
   if (invite.existingUser && isLoggedInAsInviteEmail) {
@@ -160,7 +162,7 @@ export function InviteAccept() {
         <div className="max-w-md w-full rounded-xl bg-zinc-900 border border-zinc-700 p-8 text-center">
           <h1 className="text-xl font-semibold text-white mb-2">Join {invite.orgName}</h1>
           <p className="text-zinc-400 mb-6">
-            Sign in with <strong className="text-zinc-300">{invite.email}</strong> to accept this invite.
+            Sign in with <strong className="text-zinc-300">{invite.email || 'the invited email'}</strong> to accept this invite.
           </p>
           <Link to={`/signin?return=${encodeURIComponent(signInReturn)}`}>
             <Button className="w-full bg-brand-orange hover:bg-brand-orange/90 text-white">
