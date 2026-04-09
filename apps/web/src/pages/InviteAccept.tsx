@@ -157,6 +157,7 @@ export function InviteAccept() {
   // Existing user but not signed in (or wrong account) → prompt sign in
   if (invite.existingUser) {
     const signInReturn = `/invite/accept?token=${encodeURIComponent(token)}`
+    const forgotPasswordLink = `/forgot-password?email=${encodeURIComponent(invite.email || '')}&return=${encodeURIComponent(signInReturn)}`
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-6">
         <div className="max-w-md w-full rounded-xl bg-zinc-900 border border-zinc-700 p-8 text-center">
@@ -164,11 +165,18 @@ export function InviteAccept() {
           <p className="text-zinc-400 mb-6">
             Sign in with <strong className="text-zinc-300">{invite.email || 'the invited email'}</strong> to accept this invite.
           </p>
-          <Link to={`/signin?return=${encodeURIComponent(signInReturn)}`}>
-            <Button className="w-full bg-brand-orange hover:bg-brand-orange/90 text-white">
-              Sign in to join
-            </Button>
-          </Link>
+          <div className="space-y-3">
+            <Link to={`/signin?return=${encodeURIComponent(signInReturn)}`}>
+              <Button className="w-full bg-brand-orange hover:bg-brand-orange/90 text-white">
+                Sign in to join
+              </Button>
+            </Link>
+            <Link to={forgotPasswordLink}>
+              <Button variant="outline" className="w-full border-zinc-600 text-zinc-200 hover:bg-zinc-800">
+                Create password
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
     )

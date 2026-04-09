@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,7 +9,11 @@ import { api } from '@/lib/api'
 import { useToast } from '@/contexts/ToastContext'
 
 export function ForgotPassword() {
-  const [email, setEmail] = useState('')
+  const [searchParams] = useSearchParams()
+  const initialEmail = useMemo(() => (searchParams.get('email') || '').trim(), [searchParams])
+  const returnTo = useMemo(() => (searchParams.get('return') || '').trim(), [searchParams])
+  const signinHref = returnTo ? `/signin?return=${encodeURIComponent(returnTo)}` : '/signin'
+  const [email, setEmail] = useState(initialEmail)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -65,7 +69,7 @@ export function ForgotPassword() {
           </form>
           <p className="mt-4 text-center text-sm text-zinc-400">
             Back to{' '}
-            <Link to="/signin" className="text-white hover:underline">
+            <Link to={signinHref} className="text-white hover:underline">
               Sign in
             </Link>
           </p>
