@@ -296,11 +296,18 @@ def _split_full_name(full: str) -> Tuple[str, str]:
     return parts[0], (parts[1] if len(parts) > 1 else "")
 
 
-def _csv_has_first_last_columns(headers: dict) -> bool:
-    """Import CSV must declare separate First Name and Last Name columns (labels are case-insensitive)."""
-    has_first = any(k in headers for k in ("first name", "first_name", "firstname"))
-    has_last = any(k in headers for k in ("last name", "last_name", "lastname"))
-    return has_first and has_last
+def _normalize_header_label(label: str) -> str:
+    """Normalize CSV header labels for resilient comparison."""
+    return re.sub(r"[\s_]+", "", (label or "").strip().lower())
+
+
+def _csv_has_required_member_header_order(row: list) -> bool:
+    """Require CSV column order: 1=First Name, 2=Last Name."""
+    if len(row) < 2:
+        return False
+    first_label = _normalize_header_label(row[0])
+    last_label = _normalize_header_label(row[1])
+    return first_label == "firstname" and last_label == "lastname"
 
 
 def _normalize_csv_headers(row: list) -> dict:
@@ -361,14 +368,16 @@ async def import_members_csv(
     if not rows_list:
         raise HTTPException(status_code=400, detail="CSV file is empty")
 
-    headers = _normalize_csv_headers(rows_list[0])
-    if "email" not in headers:
-        raise HTTPException(status_code=400, detail="CSV must have an 'email' column")
-    if not _csv_has_first_last_columns(headers):
+    header_row = rows_list[0]
+    if not _csv_has_required_member_header_order(header_row):
         raise HTTPException(
             status_code=400,
-            detail="CSV must include separate 'First Name' and 'Last Name' columns. Export members to get the correct format, or use the import template.",
+            detail="CSV column 1 must be 'First Name' and column 2 must be 'Last Name'. Export members to get the correct format, or use the import template.",
         )
+
+    headers = _normalize_csv_headers(header_row)
+    if "email" not in headers:
+        raise HTTPException(status_code=400, detail="CSV must have an 'email' column")
 
     org_doc = db.collection("organizations").document(org_id).get()
     org_name = ((org_doc.to_dict() or {}).get("name") or "Organization") if org_doc.exists else "Organization"

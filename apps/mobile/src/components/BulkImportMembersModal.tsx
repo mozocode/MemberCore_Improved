@@ -86,7 +86,7 @@ function parseCsvToRows(csvText: string): CsvMemberRow[] {
   const emailIdx = idx('email')
   const roleIdx = idx('role') >= 0 ? idx('role') : -1
 
-  if (emailIdx < 0 || firstIdx < 0 || lastIdx < 0) return []
+  if (firstIdx !== 0 || lastIdx !== 1 || emailIdx < 0) return []
 
   const rows: CsvMemberRow[] = []
   for (let r = 1; r < lines.length; r++) {
@@ -159,7 +159,7 @@ export function BulkImportMembersModal({
       const parsed = parseCsvToRows(content)
       if (parsed.length === 0) {
         setParseError(
-          "We couldn't read that file. Use columns: First Name, Last Name, Email (and optional Role).",
+          "We couldn't read that file. Column 1 must be First Name and column 2 must be Last Name (Email required).",
         )
         setRows([])
         setPickedFile(null)
@@ -231,7 +231,7 @@ export function BulkImportMembersModal({
               <TouchableOpacity style={styles.pickButton} onPress={pickFile} activeOpacity={0.7}>
                 <Feather name="upload-cloud" size={24} color="#3b82f6" />
                 <Text style={styles.pickButtonText}>Select CSV file</Text>
-                <Text style={styles.pickHint}>Columns: First Name, Last Name, Email, Role (optional)</Text>
+                <Text style={styles.pickHint}>Col 1: First Name, Col 2: Last Name, Email, Role (optional)</Text>
               </TouchableOpacity>
             </View>
           ) : (

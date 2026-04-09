@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.members import _normalize_csv_headers, _parse_csv_row
+from app.api.members import (
+    _csv_has_required_member_header_order,
+    _normalize_csv_headers,
+    _parse_csv_row,
+)
 from app.main import app
 
 
@@ -60,6 +64,13 @@ def test_parse_csv_row_nickname_and_position():
     # "title" column is also accepted as alias for position
     headers2 = {"email": 0, "title": 1}
     assert _parse_csv_row(["a@b.co", "Secretary"], headers2)["title"] == "Secretary"
+
+
+def test_required_member_header_order():
+    assert _csv_has_required_member_header_order(["First Name", "Last Name", "Email"])
+    assert _csv_has_required_member_header_order(["first_name", "last_name", "email"])
+    assert not _csv_has_required_member_header_order(["Name", "Email", "Role"])
+    assert not _csv_has_required_member_header_order(["Last Name", "First Name", "Email"])
 
 
 # --- Integration test: import-csv endpoint ---
@@ -143,7 +154,26 @@ def test_import_csv_rejects_without_first_last_columns(mock_get_firestore):
             files={"file": ("members.csv", io.BytesIO(csv_content), "text/csv")},
         )
         assert response.status_code == 400
-        assert "first name" in response.json().get("detail", "").lower()
+        assert "column 1" in response.json().get("detail", "").lower()
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@patch("app.api.members.get_firestore")
+def test_import_csv_rejects_wrong_first_two_columns(mock_get_firestore):
+    mock_get_firestore.return_value = _make_mock_firestore()
+    from app.core.security import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: {"id": "user-admin-1"}
+
+    csv_content = b"name,email,first_name,last_name\nJane Doe,jane@example.com,Jane,Doe\n"
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/organizations/org-1/members/import-csv",
+            files={"file": ("members.csv", io.BytesIO(csv_content), "text/csv")},
+        )
+        assert response.status_code == 400
+        assert "column 1" in response.json().get("detail", "").lower()
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 

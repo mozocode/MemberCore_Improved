@@ -15,6 +15,7 @@ Use the template **`members_import_template.csv`** in this directory. It has exa
 **Optional:** You can add a **Role** column with values `admin`, `member`, or `restricted`. If omitted, new members are added as `member`.
 
 - Header row is required; column names are case-insensitive.
+- **Column order is required:** column 1 must be `First Name`, and column 2 must be `Last Name`.
 - File must be UTF-8 encoded and use `.csv` extension.
 
 ## What happens once the CSV is imported?
