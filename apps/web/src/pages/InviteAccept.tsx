@@ -16,7 +16,7 @@ export function InviteAccept() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')
   const navigate = useNavigate()
-  const { user, loading: authLoading, signin, signup } = useAuth()
+  const { user, signup } = useAuth()
   const [invite, setInvite] = useState<ResolvedInvite | null>(null)
   const [resolveError, setResolveError] = useState<string | null>(null)
   const [accepting, setAccepting] = useState(false)
@@ -51,6 +51,23 @@ export function InviteAccept() {
         }
       })
   }, [token])
+
+  // When existing user returns from sign-in, auto-accept and redirect.
+  // Must stay before any conditional returns to preserve hook order.
+  useEffect(() => {
+    if (!token || !invite?.existingUser || !user) return
+    if ((user.email || '').toLowerCase() !== invite.email.toLowerCase()) return
+    let cancelled = false
+    inviteApi
+      .accept(token)
+      .then((res) => {
+        if (!cancelled) navigate(`/org/${res.orgId}`, { replace: true })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [token, invite, user, navigate])
 
   const handleJoin = async () => {
     if (!token || !invite) return
@@ -115,14 +132,6 @@ export function InviteAccept() {
   }
 
   const isLoggedInAsInviteEmail = user && (user.email || '').toLowerCase() === invite.email.toLowerCase()
-
-  // When existing user returns from sign-in, auto-accept and redirect
-  useEffect(() => {
-    if (!token || !invite?.existingUser || !user || (user.email || '').toLowerCase() !== invite.email.toLowerCase()) return
-    let cancelled = false
-    inviteApi.accept(token).then((res) => { if (!cancelled) navigate(`/org/${res.orgId}`, { replace: true }) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [token, invite, user, navigate])
 
   // Existing user + already signed in as this email → one-click Join
   if (invite.existingUser && isLoggedInAsInviteEmail) {
