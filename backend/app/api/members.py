@@ -409,17 +409,15 @@ async def import_members_csv(
         existing_users = list(users_ref.where("email", "==", email).limit(1).get())
 
         if existing_users:
-            user_doc = existing_users[0]
-            user_id = user_doc.id
-            # Optionally update name if we have first/last and user exists
-            ud = user_doc.to_dict() or {}
-            if (parsed["first_name"] or parsed["last_name"]) and not (ud.get("name") or "").strip():
-                name = f"{parsed['first_name']} {parsed['last_name']}".strip()
-                if name:
-                    users_ref.document(user_id).update({
-                        "name": name,
-                        "updated_at": datetime.now(timezone.utc),
-                    })
+            # Do not overwrite or auto-import rows for users that already exist on platform.
+            result_rows.append({
+                "row_index": row_index,
+                "email": email,
+                "status": "duplicate",
+                "error_message": "Email already exists on MemberCore",
+            })
+            skipped_count += 1
+            continue
         else:
             user_id = generate_uuid()
             name = f"{parsed['first_name']} {parsed['last_name']}".strip() or email

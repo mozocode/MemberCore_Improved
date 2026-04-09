@@ -24,7 +24,7 @@ Use the template **`members_import_template.csv`** in this directory. It has exa
    Each row is validated. Rows without a valid email are skipped and reported in the response.
 
 2. **User account**  
-   - If a user with that email **already exists**: their name is updated from First/Last name only if their current name is empty.  
+   - If a user with that email **already exists on MemberCore**: the row is skipped (no fields are overwritten).  
    - If **no user exists**: a new user is created with that email, a generated name (First + Last or email), and a random temporary password (they will need to use “Forgot password” or be invited to set one).
 
 3. **Organization membership**  

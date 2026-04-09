@@ -117,6 +117,51 @@ def _make_mock_firestore():
     return db
 
 
+def _make_mock_firestore_with_existing_user():
+    """Firestore mock: current user is admin; imported email already exists as a platform user."""
+    db = MagicMock()
+    mock_member_doc = MagicMock()
+    mock_member_doc.to_dict.return_value = {"role": "admin", "organization_id": "org-1"}
+    mock_member_doc.id = "mem-1"
+
+    members_get_calls = [0]
+
+    def members_get():
+        members_get_calls[0] += 1
+        return [mock_member_doc] if members_get_calls[0] == 1 else []
+
+    members_limit = MagicMock()
+    members_limit.get.side_effect = members_get
+    members_where2 = MagicMock()
+    members_where2.limit.return_value = members_limit
+    members_where1 = MagicMock()
+    members_where1.where.return_value = members_where2
+    members_col = MagicMock()
+    members_col.where.return_value = members_where1
+    members_col.document.return_value.set = MagicMock()
+
+    existing_user_doc = MagicMock()
+    existing_user_doc.id = "existing-user-1"
+    existing_user_doc.to_dict.return_value = {"email": "jane.new@example.com", "name": "Jane Existing"}
+
+    users_query = MagicMock()
+    users_query.limit.return_value = users_query
+    users_query.get.return_value = [existing_user_doc]
+    users_col = MagicMock()
+    users_col.where.return_value = users_query
+    users_col.document.return_value.set = MagicMock()
+
+    def col(name):
+        if name == "members":
+            return members_col
+        if name == "users":
+            return users_col
+        return MagicMock()
+
+    db.collection.side_effect = col
+    return db
+
+
 @patch("app.api.members.get_firestore")
 def test_import_csv_endpoint_success(mock_get_firestore):
     mock_get_firestore.return_value = _make_mock_firestore()
@@ -136,6 +181,28 @@ def test_import_csv_endpoint_success(mock_get_firestore):
         assert "skipped_count" in data
         assert "rows" in data
         assert data["imported_count"] >= 1
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@patch("app.api.members.get_firestore")
+def test_import_csv_skips_existing_platform_user(mock_get_firestore):
+    mock_get_firestore.return_value = _make_mock_firestore_with_existing_user()
+    from app.core.security import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: {"id": "user-admin-1"}
+
+    csv_content = b"first_name,last_name,email,role\nJane,Doe,jane.new@example.com,member\n"
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/organizations/org-1/members/import-csv",
+            files={"file": ("members.csv", io.BytesIO(csv_content), "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["imported_count"] == 0
+        assert data["skipped_count"] >= 1
+        assert any("already exists on membercore" in (r.get("error_message", "").lower()) for r in data.get("rows", []))
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 
