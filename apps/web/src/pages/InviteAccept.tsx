@@ -163,20 +163,13 @@ export function InviteAccept() {
         <div className="max-w-md w-full rounded-xl bg-zinc-900 border border-zinc-700 p-8 text-center">
           <h1 className="text-xl font-semibold text-white mb-2">Join {invite.orgName}</h1>
           <p className="text-zinc-400 mb-6">
-            Sign in with <strong className="text-zinc-300">{invite.email || 'the invited email'}</strong> to accept this invite.
+            Set a password for <strong className="text-zinc-300">{invite.email || 'the invited email'}</strong> to accept this invite.
           </p>
-          <div className="space-y-3">
-            <Link to={`/signin?return=${encodeURIComponent(signInReturn)}`}>
-              <Button className="w-full bg-brand-orange hover:bg-brand-orange/90 text-white">
-                Sign in to join
-              </Button>
-            </Link>
-            <Link to={forgotPasswordLink}>
-              <Button variant="outline" className="w-full border-zinc-600 text-zinc-200 hover:bg-zinc-800">
-                Create password
-              </Button>
-            </Link>
-          </div>
+          <Link to={forgotPasswordLink}>
+            <Button className="w-full bg-brand-orange hover:bg-brand-orange/90 text-white">
+              Create password
+            </Button>
+          </Link>
         </div>
       </div>
     )
