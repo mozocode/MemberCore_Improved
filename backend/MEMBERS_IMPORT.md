@@ -6,9 +6,9 @@ Use the template **`members_import_template.csv`** in this directory. It has exa
 
 | Column       | Required | Description |
 |-------------|----------|-------------|
-| First Name  | No       | Given name |
-| Last Name   | No       | Family name |
-| Email       | **Yes**  | Must be valid; used to match or create the user |
+| First Name  | **Yes** | Column must appear in the header; given name |
+| Last Name   | **Yes** | Column must appear in the header; family name |
+| Email       | **Yes** | Must be valid; used to match or create the user |
 | Nickname    | No       | Display name in the org (e.g. "JD" for Jane Doe) |
 | Position    | No       | Role/title in the org (e.g. "Treasurer", "Secretary") |
 

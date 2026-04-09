@@ -130,6 +130,25 @@ def test_import_csv_endpoint_success(mock_get_firestore):
 
 
 @patch("app.api.members.get_firestore")
+def test_import_csv_rejects_without_first_last_columns(mock_get_firestore):
+    mock_get_firestore.return_value = _make_mock_firestore()
+    from app.core.security import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: {"id": "user-admin-1"}
+
+    csv_content = b"email,role\njane@example.com,member\n"
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/organizations/org-1/members/import-csv",
+            files={"file": ("members.csv", io.BytesIO(csv_content), "text/csv")},
+        )
+        assert response.status_code == 400
+        assert "first name" in response.json().get("detail", "").lower()
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@patch("app.api.members.get_firestore")
 def test_import_csv_rejects_non_csv(mock_get_firestore):
     mock_get_firestore.return_value = _make_mock_firestore()
     from app.core.security import get_current_user

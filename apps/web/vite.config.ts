@@ -23,7 +23,8 @@ export default defineConfig({
   build: {
     target: 'esnext',
     minify: 'esbuild',
-    chunkSizeWarningLimit: 600,
+    // Mapbox is intentionally isolated and only loaded on map flows; keep warning noise low.
+    chunkSizeWarningLimit: 1800,
     rollupOptions: {
       output: {
         manualChunks: (id) => {

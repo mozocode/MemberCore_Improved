@@ -4,7 +4,7 @@ import io
 import re
 import secrets
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status, Depends
 from fastapi.responses import StreamingResponse
@@ -235,15 +235,21 @@ def export_members_csv(
         .stream()
     )
 
-    rows = [["Name", "Email", "Nickname", "Title", "Role", "Joined Date", "Status"]]
+    rows = [["First Name", "Last Name", "Email", "Nickname", "Title", "Role", "Joined Date", "Status"]]
     for doc in docs:
         md = doc.to_dict()
         user_doc = db.collection("users").document(md["user_id"]).get()
-        name, email = "Unknown", ""
+        first_name, last_name, email = "", "", ""
         if user_doc.exists:
             ud = user_doc.to_dict()
-            name = ud.get("name") or ud.get("email") or "Unknown"
+            raw_name = (ud.get("name") or "").strip()
             email = ud.get("email") or ""
+            if raw_name:
+                first_name, last_name = _split_full_name(raw_name)
+            elif email:
+                first_name, last_name = _split_full_name(email.split("@")[0].replace(".", " "))
+        else:
+            first_name, last_name = "Unknown", ""
         joined = md.get("joined_at") or md.get("approved_at")
         if joined is None:
             joined_str = ""
@@ -256,7 +262,8 @@ def export_members_csv(
         else:
             joined_str = ""
         rows.append([
-            name,
+            first_name,
+            last_name,
             email,
             md.get("nickname") or "",
             md.get("title") or "",
@@ -280,6 +287,22 @@ def export_members_csv(
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
+def _split_full_name(full: str) -> Tuple[str, str]:
+    """Split stored full name into first + last (first token / remainder)."""
+    s = (full or "").strip()
+    if not s:
+        return "", ""
+    parts = s.split(None, 1)
+    return parts[0], (parts[1] if len(parts) > 1 else "")
+
+
+def _csv_has_first_last_columns(headers: dict) -> bool:
+    """Import CSV must declare separate First Name and Last Name columns (labels are case-insensitive)."""
+    has_first = any(k in headers for k in ("first name", "first_name", "firstname"))
+    has_last = any(k in headers for k in ("last name", "last_name", "lastname"))
+    return has_first and has_last
+
+
 def _normalize_csv_headers(row: list) -> dict:
     """Map first row to lowercase keys for case-insensitive column lookup."""
     return { (cell or "").strip().lower(): i for i, cell in enumerate(row) }
@@ -298,11 +321,6 @@ def _parse_csv_row(row: list, headers: dict) -> Optional[dict]:
         return None
     first = get("first_name") or get("first name") or get("firstname")
     last = get("last_name") or get("last name") or get("lastname")
-    full_name = get("name") or get("full_name") or get("full name") or get("fullname")
-    if full_name and not first and not last:
-        parts = full_name.split(None, 1)
-        first = parts[0] if parts else ""
-        last = parts[1] if len(parts) > 1 else ""
     role_raw = (get("role") or "member").lower()
     role = role_raw if role_raw in ("admin", "member", "restricted") else "member"
     nickname = (get("nickname") or "").strip() or None
@@ -346,6 +364,11 @@ async def import_members_csv(
     headers = _normalize_csv_headers(rows_list[0])
     if "email" not in headers:
         raise HTTPException(status_code=400, detail="CSV must have an 'email' column")
+    if not _csv_has_first_last_columns(headers):
+        raise HTTPException(
+            status_code=400,
+            detail="CSV must include separate 'First Name' and 'Last Name' columns. Export members to get the correct format, or use the import template.",
+        )
 
     org_doc = db.collection("organizations").document(org_id).get()
     org_name = ((org_doc.to_dict() or {}).get("name") or "Organization") if org_doc.exists else "Organization"

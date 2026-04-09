@@ -74,12 +74,19 @@ function parseCsvToRows(csvText: string): CsvMemberRow[] {
     const alt = name.replace(/_/g, ' ').toLowerCase()
     return headerLower.findIndex((h) => h === alt)
   }
-  const firstIdx = idx('first_name') >= 0 ? idx('first_name') : idx('first name')
-  const lastIdx = idx('last_name') >= 0 ? idx('last_name') : idx('last name')
+  const colIndex = (...candidates: string[]) => {
+    for (const c of candidates) {
+      const i = idx(c)
+      if (i >= 0) return i
+    }
+    return -1
+  }
+  const firstIdx = colIndex('first_name', 'first name', 'firstname')
+  const lastIdx = colIndex('last_name', 'last name', 'lastname')
   const emailIdx = idx('email')
   const roleIdx = idx('role') >= 0 ? idx('role') : -1
 
-  if (emailIdx < 0) return []
+  if (emailIdx < 0 || firstIdx < 0 || lastIdx < 0) return []
 
   const rows: CsvMemberRow[] = []
   for (let r = 1; r < lines.length; r++) {
@@ -151,7 +158,9 @@ export function BulkImportMembersModal({
       const content = await FileSystem.readAsStringAsync(file.uri, { encoding: 'utf8' })
       const parsed = parseCsvToRows(content)
       if (parsed.length === 0) {
-        setParseError("We couldn't read that file. Please check the format (need header with 'email').")
+        setParseError(
+          "We couldn't read that file. Use columns: First Name, Last Name, Email (and optional Role).",
+        )
         setRows([])
         setPickedFile(null)
         return
@@ -222,7 +231,7 @@ export function BulkImportMembersModal({
               <TouchableOpacity style={styles.pickButton} onPress={pickFile} activeOpacity={0.7}>
                 <Feather name="upload-cloud" size={24} color="#3b82f6" />
                 <Text style={styles.pickButtonText}>Select CSV file</Text>
-                <Text style={styles.pickHint}>Columns: first_name, last_name, email, role</Text>
+                <Text style={styles.pickHint}>Columns: First Name, Last Name, Email, Role (optional)</Text>
               </TouchableOpacity>
             </View>
           ) : (
