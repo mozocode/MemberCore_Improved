@@ -11,9 +11,9 @@ import { SignIn } from '@/pages/SignIn'
 import { SignUp } from '@/pages/SignUp'
 import { ForgotPassword } from '@/pages/ForgotPassword'
 import { ResetPassword } from '@/pages/ResetPassword'
+import { UserDashboard } from '@/pages/UserDashboard'
 
 // Lazy-loaded routes (code-split; load on first visit)
-const UserDashboard = lazy(() => import('@/pages/UserDashboard').then((m) => ({ default: m.UserDashboard })))
 const CreateOrganization = lazy(() => import('@/pages/CreateOrganization').then((m) => ({ default: m.CreateOrganization })))
 const JoinOrganization = lazy(() => import('@/pages/JoinOrganization').then((m) => ({ default: m.JoinOrganization })))
 const OrgLayout = lazy(() => import('@/components/OrgLayout').then((m) => ({ default: m.OrgLayout })))
