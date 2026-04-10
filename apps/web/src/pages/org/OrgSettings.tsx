@@ -3870,7 +3870,6 @@ function SettingsMembers({ orgId }: { orgId: string }) {
               <li key={m.id} className="flex items-center justify-between p-3 rounded-lg bg-zinc-800 border border-zinc-700 flex-wrap gap-2">
                 <div>
                   <p className="font-medium text-white">{m.name}</p>
-                  <p className="text-sm text-zinc-500">{m.email}</p>
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -3978,7 +3977,6 @@ function SettingsMembers({ orgId }: { orgId: string }) {
                       {displayWithTitle}
                       {member.role === 'owner' && <span className="text-zinc-500 text-sm font-normal"> (owner)</span>}
                     </p>
-                    <p className="text-sm text-zinc-500 truncate">{member.email}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {canEdit ? (
