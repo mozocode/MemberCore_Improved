@@ -51,8 +51,10 @@
     },
     "owner": "mozodev",
     "updates": {
-      "enabled": false,
-      "url": "https://u.expo.dev/ec788f34-0bbb-4caf-abc7-b0efe8f3f83e"
+      "enabled": true,
+      "url": "https://u.expo.dev/ec788f34-0bbb-4caf-abc7-b0efe8f3f83e",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     },
     "runtimeVersion": {
       "policy": "appVersion"

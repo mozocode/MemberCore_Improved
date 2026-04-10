@@ -11,6 +11,7 @@
     },
     "development": {
       "extends": "base",
+      "channel": "development",
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
@@ -19,6 +20,7 @@
     },
     "preview": {
       "extends": "base",
+      "channel": "preview",
       "distribution": "internal",
       "ios": {
         "simulator": false
@@ -29,6 +31,7 @@
     },
     "production": {
       "extends": "base",
+      "channel": "production",
       "autoIncrement": true,
       "ios": {
         "image": "latest"
@@ -39,6 +42,7 @@
     },
     "testflight": {
       "extends": "production",
+      "channel": "production",
       "distribution": "store",
       "ios": {
         "image": "latest",
