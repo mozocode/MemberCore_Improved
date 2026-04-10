@@ -302,12 +302,12 @@ def _normalize_header_label(label: str) -> str:
 
 
 def _csv_has_required_member_header_order(row: list) -> bool:
-    """Require CSV column order: 1=First Name, 2=Last Name."""
-    if len(row) < 2:
+    """Require First Name, Last Name, and Email columns (any order)."""
+    if len(row) < 3:
         return False
-    first_label = _normalize_header_label(row[0])
-    last_label = _normalize_header_label(row[1])
-    return first_label == "firstname" and last_label == "lastname"
+    normalized = {_normalize_header_label(cell) for cell in row}
+    required = {"firstname", "lastname", "email"}
+    return required.issubset(normalized)
 
 
 def _normalize_csv_headers(row: list) -> dict:
@@ -372,12 +372,10 @@ async def import_members_csv(
     if not _csv_has_required_member_header_order(header_row):
         raise HTTPException(
             status_code=400,
-            detail="CSV column 1 must be 'First Name' and column 2 must be 'Last Name'. Export members to get the correct format, or use the import template.",
+            detail="CSV must include 'First Name', 'Last Name', and 'Email' columns. Other columns are optional.",
         )
 
     headers = _normalize_csv_headers(header_row)
-    if "email" not in headers:
-        raise HTTPException(status_code=400, detail="CSV must have an 'email' column")
 
     org_doc = db.collection("organizations").document(org_id).get()
     org_name = ((org_doc.to_dict() or {}).get("name") or "Organization") if org_doc.exists else "Organization"

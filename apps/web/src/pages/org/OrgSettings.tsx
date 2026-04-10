@@ -3795,6 +3795,7 @@ function SettingsMembers({ orgId }: { orgId: string }) {
       const { data } = await api.post<{ imported_count: number; skipped_count: number; invites_sent?: number }>(
         `/organizations/${orgId}/members/import-csv`,
         form,
+        { timeout: 10 * 60 * 1000 }, // Large imports can legitimately run several minutes.
       )
       setActionMessage({
         type: 'success',
@@ -3802,6 +3803,14 @@ function SettingsMembers({ orgId }: { orgId: string }) {
       })
       fetchMembers()
     } catch (err: unknown) {
+      const maybeAxios = err as { code?: string; message?: string; response?: { data?: { detail?: string } } }
+      if (maybeAxios?.code === 'ECONNABORTED') {
+        setActionMessage({
+          type: 'error',
+          text: 'Import is taking longer than expected. Please wait and refresh members in a minute to confirm results.',
+        })
+        return
+      }
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setActionMessage({ type: 'error', text: typeof detail === 'string' ? detail : 'Import failed. Please check your CSV format and try again.' })
     } finally {

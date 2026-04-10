@@ -66,11 +66,12 @@ def test_parse_csv_row_nickname_and_position():
     assert _parse_csv_row(["a@b.co", "Secretary"], headers2)["title"] == "Secretary"
 
 
-def test_required_member_header_order():
+def test_required_member_columns_any_order():
     assert _csv_has_required_member_header_order(["First Name", "Last Name", "Email"])
     assert _csv_has_required_member_header_order(["first_name", "last_name", "email"])
+    assert _csv_has_required_member_header_order(["Email", "Role", "Last Name", "First Name"])
     assert not _csv_has_required_member_header_order(["Name", "Email", "Role"])
-    assert not _csv_has_required_member_header_order(["Last Name", "First Name", "Email"])
+    assert not _csv_has_required_member_header_order(["First Name", "Last Name", "Role"])
 
 
 # --- Integration test: import-csv endpoint ---
@@ -221,13 +222,14 @@ def test_import_csv_rejects_without_first_last_columns(mock_get_firestore):
             files={"file": ("members.csv", io.BytesIO(csv_content), "text/csv")},
         )
         assert response.status_code == 400
-        assert "column 1" in response.json().get("detail", "").lower()
+        detail = response.json().get("detail", "").lower()
+        assert "first name" in detail and "last name" in detail and "email" in detail
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 
 
 @patch("app.api.members.get_firestore")
-def test_import_csv_rejects_wrong_first_two_columns(mock_get_firestore):
+def test_import_csv_accepts_required_columns_in_any_order(mock_get_firestore):
     mock_get_firestore.return_value = _make_mock_firestore()
     from app.core.security import get_current_user
     app.dependency_overrides[get_current_user] = lambda: {"id": "user-admin-1"}
@@ -239,8 +241,10 @@ def test_import_csv_rejects_wrong_first_two_columns(mock_get_firestore):
             "/api/organizations/org-1/members/import-csv",
             files={"file": ("members.csv", io.BytesIO(csv_content), "text/csv")},
         )
-        assert response.status_code == 400
-        assert "column 1" in response.json().get("detail", "").lower()
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["imported_count"] == 1
+        assert data["skipped_count"] == 0
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 
