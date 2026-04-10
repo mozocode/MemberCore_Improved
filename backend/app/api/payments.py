@@ -43,6 +43,155 @@ def _stripe_checkout_error_response(context: str, exc: Exception, **log_fields):
     )
 
 
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _record_dues_payment_transactional(
+    db,
+    *,
+    org_id: str,
+    user_id: str,
+    member_id: Optional[str],
+    plan_id: Optional[str],
+    amount: float,
+    stripe_session_id: Optional[str],
+    stripe_payment_id: Optional[str] = None,
+):
+    """Record dues payment with a transactional final-write guard.
+
+    Guard behavior:
+    - de-duplicate by Stripe session / payment intent
+    - recompute remaining plan balance at write time
+    - clamp write amount to remaining to prevent overpayment races
+    """
+    payments = db.collection("payments")
+    member_ref = db.collection("members").document(member_id) if member_id else None
+    plan_ref = db.collection("dues_plans").document(plan_id) if plan_id else None
+    now = datetime.now(timezone.utc)
+
+    def _find_existing(session_key: Optional[str], intent_key: Optional[str], transaction=None):
+        if session_key:
+            by_session = list(
+                payments.where("organization_id", "==", org_id)
+                .where("stripe_session_id", "==", session_key)
+                .limit(1)
+                .stream(transaction=transaction)
+            )
+            if by_session:
+                return by_session[0]
+        if intent_key:
+            by_intent = list(
+                payments.where("stripe_payment_id", "==", intent_key)
+                .limit(1)
+                .stream(transaction=transaction)
+            )
+            if by_intent:
+                return by_intent[0]
+        return None
+
+    def _remaining_cap(transaction=None) -> Optional[float]:
+        if not member_id or not plan_id:
+            return None
+        plan_doc = plan_ref.get(transaction=transaction) if plan_ref else None
+        if not plan_doc or not plan_doc.exists:
+            return None
+        pd = plan_doc.to_dict() or {}
+        if pd.get("organization_id") != org_id:
+            return None
+        required = _to_float(
+            pd.get("total_amount") if pd.get("total_amount") is not None else pd.get("amount", 0),
+            0.0,
+        )
+        if required <= 0:
+            return None
+        prior = list(
+            payments.where("organization_id", "==", org_id)
+            .where("member_id", "==", member_id)
+            .where("plan_id", "==", plan_id)
+            .stream(transaction=transaction)
+        )
+        paid = sum(_to_float((d.to_dict() or {}).get("amount", 0), 0.0) for d in prior)
+        return max(0.0, required - paid)
+
+    try:
+        from google.cloud import firestore as gc_firestore
+
+        @gc_firestore.transactional
+        def _in_txn(transaction):
+            if member_ref:
+                member_doc = member_ref.get(transaction=transaction)
+                if not member_doc.exists:
+                    return {"status": "pending"}
+
+            existing = _find_existing(stripe_session_id, stripe_payment_id, transaction=transaction)
+            if existing:
+                return {"status": "completed", "payment_id": existing.id}
+
+            requested = max(0.0, _to_float(amount, 0.0))
+            remaining = _remaining_cap(transaction=transaction)
+            effective_amount = min(requested, remaining) if remaining is not None else requested
+            if effective_amount <= 0:
+                return {"status": "completed", "payment_id": None}
+
+            payment_id = generate_uuid()
+            payload = {
+                "id": payment_id,
+                "organization_id": org_id,
+                "member_id": member_id,
+                "plan_id": plan_id,
+                "amount": round(effective_amount, 2),
+                "payment_method": "stripe",
+                "recorded_by": user_id,
+                "created_at": now,
+            }
+            if stripe_session_id:
+                payload["stripe_session_id"] = stripe_session_id
+            if stripe_payment_id:
+                payload["stripe_payment_id"] = stripe_payment_id
+            transaction.set(payments.document(payment_id), payload)
+            if member_ref:
+                transaction.update(member_ref, {"updated_at": now, "last_payment_at": now})
+            return {"status": "completed", "payment_id": payment_id}
+
+        tx = db.transaction()
+        return _in_txn(tx)
+    except Exception as e:
+        logger.warning("Transactional dues payment fallback used: %s", e)
+        existing = _find_existing(stripe_session_id, stripe_payment_id)
+        if existing:
+            return {"status": "completed", "payment_id": existing.id}
+
+        requested = max(0.0, _to_float(amount, 0.0))
+        remaining = _remaining_cap()
+        effective_amount = min(requested, remaining) if remaining is not None else requested
+        if effective_amount <= 0:
+            return {"status": "completed", "payment_id": None}
+
+        payment_id = generate_uuid()
+        payload = {
+            "id": payment_id,
+            "organization_id": org_id,
+            "member_id": member_id,
+            "plan_id": plan_id,
+            "amount": round(effective_amount, 2),
+            "payment_method": "stripe",
+            "recorded_by": user_id,
+            "created_at": now,
+        }
+        if stripe_session_id:
+            payload["stripe_session_id"] = stripe_session_id
+        if stripe_payment_id:
+            payload["stripe_payment_id"] = stripe_payment_id
+        payments.document(payment_id).set(payload)
+        if member_ref:
+            member_ref.update({"updated_at": now, "last_payment_at": now})
+        return {"status": "completed", "payment_id": payment_id}
+
+
 def _checkout_payment_method_types() -> list:
     """Return Stripe Checkout payment methods for one-time payments.
 
@@ -615,31 +764,6 @@ def get_checkout_status(
     """Verify Stripe checkout session and record payment."""
     db = get_firestore()
 
-    def _existing_payment_by_session(session_key: str):
-        docs = list(
-            db.collection("payments")
-            .where("organization_id", "==", org_id)
-            .where("stripe_session_id", "==", session_key)
-            .limit(1)
-            .stream()
-        )
-        if docs:
-            return docs[0].to_dict() or {"id": docs[0].id}
-        return None
-
-    def _existing_payment_by_intent(intent_id: str):
-        if not intent_id:
-            return None
-        docs = list(
-            db.collection("payments")
-            .where("stripe_payment_id", "==", intent_id)
-            .limit(1)
-            .stream()
-        )
-        if docs:
-            return docs[0].to_dict() or {"id": docs[0].id}
-        return None
-
     if session_id.startswith("mock_"):
         # Mock session - mark as completed for demo
         sess_ref = db.collection("payment_sessions").document(session_id)
@@ -647,26 +771,18 @@ def get_checkout_status(
         if sess_doc.exists:
             sd = sess_doc.to_dict()
             if sd.get("user_id") == user_id and sd.get("org_id") == org_id:
-                existing = _existing_payment_by_session(session_id)
-                if existing:
-                    sess_ref.update({"status": "completed"})
-                    return {"status": "completed", "payment_id": existing.get("id")}
-                # Record payment
-                payment_id = generate_uuid()
-                now = datetime.now(timezone.utc)
-                db.collection("payments").document(payment_id).set({
-                    "id": payment_id,
-                    "organization_id": org_id,
-                    "member_id": sd.get("member_id"),
-                    "plan_id": sd.get("plan_id"),
-                    "amount": sd.get("amount", 0),
-                    "payment_method": "stripe",
-                    "stripe_session_id": session_id,
-                    "recorded_by": user_id,
-                    "created_at": now,
-                })
+                result = _record_dues_payment_transactional(
+                    db,
+                    org_id=org_id,
+                    user_id=user_id,
+                    member_id=sd.get("member_id"),
+                    plan_id=sd.get("plan_id"),
+                    amount=_to_float(sd.get("amount", 0), 0.0),
+                    stripe_session_id=session_id,
+                    stripe_payment_id=None,
+                )
                 sess_ref.update({"status": "completed"})
-                return {"status": "completed", "payment_id": payment_id}
+                return result
         return {"status": "pending"}
 
     import os
@@ -679,27 +795,16 @@ def get_checkout_status(
             if session.payment_status == "paid" and session.metadata:
                 meta = session.metadata
                 if meta.get("org_id") == org_id and meta.get("user_id") == user_id:
-                    existing = _existing_payment_by_session(session_id)
-                    if not existing:
-                        existing = _existing_payment_by_intent(session.payment_intent)
-                    if existing:
-                        return {"status": "completed", "payment_id": existing.get("id")}
-
-                    payment_id = generate_uuid()
-                    now = datetime.now(timezone.utc)
-                    db.collection("payments").document(payment_id).set({
-                        "id": payment_id,
-                        "organization_id": org_id,
-                        "member_id": meta.get("member_id"),
-                        "plan_id": meta.get("plan_id"),
-                        "amount": float(session.amount_total or 0) / 100,
-                        "payment_method": "stripe",
-                        "stripe_session_id": session_id,
-                        "stripe_payment_id": session.payment_intent,
-                        "recorded_by": user_id,
-                        "created_at": now,
-                    })
-                    return {"status": "completed", "payment_id": payment_id}
+                    return _record_dues_payment_transactional(
+                        db,
+                        org_id=org_id,
+                        user_id=user_id,
+                        member_id=meta.get("member_id"),
+                        plan_id=meta.get("plan_id"),
+                        amount=_to_float(session.amount_total or 0, 0.0) / 100.0,
+                        stripe_session_id=session_id,
+                        stripe_payment_id=session.payment_intent,
+                    )
         except Exception:
             pass
     return {"status": "pending"}

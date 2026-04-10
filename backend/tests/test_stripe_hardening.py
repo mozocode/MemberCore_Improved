@@ -50,7 +50,7 @@ class _FakeQuery:
     def limit(self, n):
         return _FakeQuery(self._collection, list(self._filters), n)
 
-    def stream(self):
+    def stream(self, transaction=None):  # noqa: ARG002 - parity with firestore API
         out = []
         for doc_id, data in self._collection._docs.items():
             match = True
@@ -87,6 +87,17 @@ class _FakeDB:
             self._cols[name] = _FakeCollection()
         return self._cols[name]
 
+    def transaction(self):
+        return _FakeTransaction()
+
+
+class _FakeTransaction:
+    def set(self, doc_ref, data):
+        doc_ref.set(data)
+
+    def update(self, doc_ref, data):
+        doc_ref.update(data)
+
 
 def _install_fake_stripe_invalid_sig(monkeypatch):
     class _SigErr(Exception):
@@ -112,6 +123,7 @@ def test_checkout_status_is_idempotent_for_mock_session(monkeypatch):
     org_id = "org-1"
     user_id = "user-1"
     session_id = "mock_test_1"
+    db.collection("members").document("member-1").set({"id": "member-1", "organization_id": org_id})
     db.collection("payment_sessions").document(session_id).set(
         {
             "org_id": org_id,
@@ -137,6 +149,64 @@ def test_checkout_status_is_idempotent_for_mock_session(monkeypatch):
         .stream()
     )
     assert len(payments) == 1
+
+
+def test_checkout_status_clamps_to_remaining_balance(monkeypatch):
+    db = _FakeDB()
+    monkeypatch.setattr(payments_api, "get_firestore", lambda: db)
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "")
+
+    org_id = "org-1"
+    user_id = "user-1"
+    member_id = "member-1"
+    plan_id = "plan-1"
+    session_id = "mock_test_2"
+
+    db.collection("members").document(member_id).set({"id": member_id, "organization_id": org_id})
+    db.collection("dues_plans").document(plan_id).set(
+        {"id": plan_id, "organization_id": org_id, "name": "Annual Dues", "total_amount": 100.0}
+    )
+    db.collection("payments").document("existing").set(
+        {
+            "id": "existing",
+            "organization_id": org_id,
+            "member_id": member_id,
+            "plan_id": plan_id,
+            "amount": 90.0,
+        }
+    )
+    db.collection("payment_sessions").document(session_id).set(
+        {
+            "org_id": org_id,
+            "member_id": member_id,
+            "plan_id": plan_id,
+            "amount": 25.0,
+            "user_id": user_id,
+            "status": "pending",
+        }
+    )
+
+    res = payments_api.get_checkout_status(org_id, session_id, user_id)
+    assert res["status"] == "completed"
+
+    new_payment = list(
+        db.collection("payments")
+        .where("organization_id", "==", org_id)
+        .where("stripe_session_id", "==", session_id)
+        .limit(1)
+        .stream()
+    )[0].to_dict()
+    assert new_payment["amount"] == 10.0
+
+    all_plan_payments = list(
+        db.collection("payments")
+        .where("organization_id", "==", org_id)
+        .where("member_id", "==", member_id)
+        .where("plan_id", "==", plan_id)
+        .stream()
+    )
+    total = sum(float(p.to_dict().get("amount", 0) or 0) for p in all_plan_payments)
+    assert total == 100.0
 
 
 def test_connect_webhook_rejects_invalid_signature(monkeypatch):
