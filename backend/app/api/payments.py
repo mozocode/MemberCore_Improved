@@ -1080,18 +1080,12 @@ async def stripe_webhook(request: Request):
 
 
 def _handle_event_ticket_purchase(session: dict, db):
-    """Create event_ticket doc and increment event tickets_sold. Idempotent on session id."""
-    session_id = session.get("id")
-    if session_id:
-        existing = list(
-            db.collection("event_tickets")
-            .where("stripe_checkout_session_id", "==", session_id)
-            .limit(1)
-            .stream()
-        )
-        if existing:
-            return
+    """Create event_ticket doc and increment event tickets_sold.
 
+    Uses deterministic ticket doc IDs + transaction to avoid duplicate tickets
+    and overselling when webhook/confirm calls race.
+    """
+    session_id = str(session.get("id") or "").strip()
     metadata = session.get("metadata") or {}
     event_id = metadata.get("event_id")
     org_id = metadata.get("organization_id")
@@ -1102,16 +1096,12 @@ def _handle_event_ticket_purchase(session: dict, db):
         return
 
     event_ref = db.collection("events").document(event_id)
-    event_doc = event_ref.get()
-    if not event_doc.exists or event_doc.to_dict().get("organization_id") != org_id:
-        return
-
-    ticket_id = generate_uuid()
+    ticket_id = f"stripe_{session_id}" if session_id else generate_uuid()
+    ticket_ref = db.collection("event_tickets").document(ticket_id)
     short_code = _generate_short_code(db, org_id)
     amount_total = session.get("amount_total") or 0
     now = datetime.now(timezone.utc)
-
-    db.collection("event_tickets").document(ticket_id).set({
+    ticket_payload = {
         "ticket_id": ticket_id,
         "short_code": short_code,
         "event_id": event_id,
@@ -1126,8 +1116,53 @@ def _handle_event_ticket_purchase(session: dict, db):
         "stripe_payment_intent_id": session.get("payment_intent"),
         "created_at": now,
         "updated_at": now,
-    })
+    }
 
-    ev = event_doc.to_dict()
-    tickets_sold = (ev.get("tickets_sold") or 0) + quantity
-    event_ref.update({"tickets_sold": tickets_sold})
+    try:
+        from google.cloud import firestore as gc_firestore
+
+        @gc_firestore.transactional
+        def _create_ticket_in_txn(transaction):
+            event_doc = event_ref.get(transaction=transaction)
+            if not event_doc.exists:
+                return False
+            ev = event_doc.to_dict() or {}
+            if ev.get("organization_id") != org_id:
+                return False
+
+            existing_ticket = ticket_ref.get(transaction=transaction)
+            if existing_ticket.exists:
+                return True
+
+            max_attendees = ev.get("max_attendees")
+            sold = int(ev.get("tickets_sold") or 0)
+            if max_attendees is not None and sold + quantity > int(max_attendees):
+                logger.warning(
+                    "Skipping ticket create for sold-out event_id=%s org_id=%s session_id=%s",
+                    event_id,
+                    org_id,
+                    session_id,
+                )
+                return False
+
+            transaction.set(ticket_ref, ticket_payload)
+            transaction.update(event_ref, {"tickets_sold": sold + quantity})
+            return True
+
+        tx = db.transaction()
+        _create_ticket_in_txn(tx)
+    except Exception as e:
+        # Fallback path keeps behavior for environments where transaction API may vary.
+        logger.warning("Falling back to non-transactional ticket create: %s", e)
+        event_doc = event_ref.get()
+        if not event_doc.exists or event_doc.to_dict().get("organization_id") != org_id:
+            return
+        if ticket_ref.get().exists:
+            return
+        ev = event_doc.to_dict() or {}
+        max_attendees = ev.get("max_attendees")
+        sold = int(ev.get("tickets_sold") or 0)
+        if max_attendees is not None and sold + quantity > int(max_attendees):
+            return
+        ticket_ref.set(ticket_payload)
+        event_ref.update({"tickets_sold": sold + quantity})

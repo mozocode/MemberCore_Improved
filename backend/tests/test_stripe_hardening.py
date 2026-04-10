@@ -1,0 +1,181 @@
+import sys
+import types
+import json
+import asyncio
+
+from app.api import payments as payments_api
+from app.api import billing as billing_api
+from starlette.requests import Request
+
+
+class _FakeDocSnapshot:
+    def __init__(self, doc_id, data):
+        self.id = doc_id
+        self._data = data
+
+    @property
+    def exists(self):
+        return self._data is not None
+
+    def to_dict(self):
+        return dict(self._data or {})
+
+
+class _FakeDocumentRef:
+    def __init__(self, collection, doc_id):
+        self._collection = collection
+        self.id = doc_id
+
+    def get(self, transaction=None):  # noqa: ARG002 - parity with firestore API
+        return _FakeDocSnapshot(self.id, self._collection._docs.get(self.id))
+
+    def set(self, data):
+        self._collection._docs[self.id] = dict(data)
+
+    def update(self, data):
+        cur = dict(self._collection._docs.get(self.id, {}))
+        cur.update(dict(data))
+        self._collection._docs[self.id] = cur
+
+
+class _FakeQuery:
+    def __init__(self, collection, filters=None, limit_n=None):
+        self._collection = collection
+        self._filters = filters or []
+        self._limit_n = limit_n
+
+    def where(self, field, op, value):
+        return _FakeQuery(self._collection, [*self._filters, (field, op, value)], self._limit_n)
+
+    def limit(self, n):
+        return _FakeQuery(self._collection, list(self._filters), n)
+
+    def stream(self):
+        out = []
+        for doc_id, data in self._collection._docs.items():
+            match = True
+            for field, op, value in self._filters:
+                if op != "==":
+                    raise AssertionError(f"Unsupported op in fake query: {op}")
+                if (data or {}).get(field) != value:
+                    match = False
+                    break
+            if match:
+                out.append(_FakeDocSnapshot(doc_id, data))
+        if self._limit_n is not None:
+            out = out[: self._limit_n]
+        return out
+
+
+class _FakeCollection:
+    def __init__(self):
+        self._docs = {}
+
+    def document(self, doc_id):
+        return _FakeDocumentRef(self, doc_id)
+
+    def where(self, field, op, value):
+        return _FakeQuery(self, [(field, op, value)], None)
+
+
+class _FakeDB:
+    def __init__(self):
+        self._cols = {}
+
+    def collection(self, name):
+        if name not in self._cols:
+            self._cols[name] = _FakeCollection()
+        return self._cols[name]
+
+
+def _install_fake_stripe_invalid_sig(monkeypatch):
+    class _SigErr(Exception):
+        pass
+
+    fake_module = types.SimpleNamespace()
+    fake_module.SignatureVerificationError = _SigErr
+
+    class _Webhook:
+        @staticmethod
+        def construct_event(payload, sig_header, secret):  # noqa: ARG004
+            raise _SigErr("bad signature")
+
+    fake_module.Webhook = _Webhook
+    monkeypatch.setitem(sys.modules, "stripe", fake_module)
+
+
+def test_checkout_status_is_idempotent_for_mock_session(monkeypatch):
+    db = _FakeDB()
+    monkeypatch.setattr(payments_api, "get_firestore", lambda: db)
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "")
+
+    org_id = "org-1"
+    user_id = "user-1"
+    session_id = "mock_test_1"
+    db.collection("payment_sessions").document(session_id).set(
+        {
+            "org_id": org_id,
+            "member_id": "member-1",
+            "plan_id": "plan-1",
+            "amount": 25.00,
+            "user_id": user_id,
+            "status": "pending",
+        }
+    )
+
+    first = payments_api.get_checkout_status(org_id, session_id, user_id)
+    second = payments_api.get_checkout_status(org_id, session_id, user_id)
+
+    assert first["status"] == "completed"
+    assert second["status"] == "completed"
+    assert first["payment_id"] == second["payment_id"]
+
+    payments = list(
+        db.collection("payments")
+        .where("organization_id", "==", org_id)
+        .where("stripe_session_id", "==", session_id)
+        .stream()
+    )
+    assert len(payments) == 1
+
+
+def test_connect_webhook_rejects_invalid_signature(monkeypatch):
+    _install_fake_stripe_invalid_sig(monkeypatch)
+    monkeypatch.setenv("STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_test")
+    body = json.dumps(
+        {"id": "evt_test", "type": "account.updated", "data": {"object": {"id": "acct_test"}}}
+    ).encode("utf-8")
+
+    async def _receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/billing/webhook/connect",
+        "headers": [(b"stripe-signature", b"invalid")],
+    }
+    response = asyncio.run(billing_api.stripe_connect_webhook(Request(scope, _receive)))
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8"))["detail"] == "Invalid signature"
+
+
+def test_subscription_webhook_rejects_invalid_signature(monkeypatch):
+    _install_fake_stripe_invalid_sig(monkeypatch)
+    monkeypatch.setenv("STRIPE_SUBSCRIPTION_WEBHOOK_SECRET", "whsec_test")
+    body = json.dumps({"id": "evt_test", "type": "invoice.paid", "data": {"object": {}}}).encode("utf-8")
+
+    async def _receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/billing/webhook/subscription",
+        "headers": [(b"stripe-signature", b"invalid")],
+    }
+    response = asyncio.run(billing_api.stripe_subscription_webhook(Request(scope, _receive)))
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8"))["detail"] == "Invalid signature"
