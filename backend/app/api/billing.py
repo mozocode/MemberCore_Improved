@@ -14,6 +14,7 @@ Stripe events we handle:
 
 import os
 import logging
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -137,6 +138,15 @@ def _stripe_checkout_error_response(context: str, exc: Exception):
         status_code=500,
         detail="Could not start Stripe checkout. Please verify billing configuration and try again.",
     )
+
+
+def _stripe_idempotency_key(prefix: str, *parts: object, window_minutes: int = 5) -> str:
+    """Build a deterministic Stripe idempotency key within a short time window."""
+    now = datetime.now(timezone.utc)
+    bucket = int(now.timestamp() // (window_minutes * 60))
+    payload = "|".join([prefix, str(bucket), *[str(p or "") for p in parts]])
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:48]
+    return f"{prefix}_{digest}"
 
 
 def _require_org_owner_or_admin(db, org_id: str, user_id: str):
@@ -547,6 +557,14 @@ def create_checkout_session(
         subscription_data["trial_period_days"] = int(trial_days)
 
     try:
+        idempotency_key = _stripe_idempotency_key(
+            "billing_checkout_mobile",
+            org_id,
+            user["id"],
+            customer_id,
+            plan,
+            price_id,
+        )
         session = stripe.checkout.Session.create(
             mode="subscription",
             customer=customer_id,
@@ -555,6 +573,7 @@ def create_checkout_session(
             cancel_url=cancel_url,
             subscription_data=subscription_data,
             metadata={"org_id": org_id, "type": "org_subscription", "plan": plan},
+            idempotency_key=idempotency_key,
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:
@@ -599,6 +618,15 @@ def create_subscription_checkout(
         price_id = _get_or_create_pro_price(stripe)
 
     try:
+        idempotency_key = _stripe_idempotency_key(
+            "billing_checkout_web",
+            org_id,
+            user["id"],
+            customer_id,
+            price_id,
+            req.success_url,
+            req.cancel_url,
+        )
         session = stripe.checkout.Session.create(
             mode="subscription",
             customer=customer_id,
@@ -610,6 +638,7 @@ def create_subscription_checkout(
                 "trial_period_days": int(os.getenv("STRIPE_TRIAL_DAYS", "14")),
             },
             metadata={"org_id": org_id, "type": "org_subscription"},
+            idempotency_key=idempotency_key,
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:

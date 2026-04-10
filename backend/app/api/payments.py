@@ -2,6 +2,8 @@
 import os
 import random
 import string
+import hashlib
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -13,6 +15,7 @@ from app.db.firebase import get_firestore
 from app.core.security import get_current_user_id, get_current_user, generate_uuid
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Stripe has a 2048-char limit per URL. Data URIs (base64) must not be passed to product_data.images.
 MAX_STRIPE_IMAGE_URL_LENGTH = 2048
@@ -20,6 +23,24 @@ MAX_STRIPE_IMAGE_URL_LENGTH = 2048
 
 SHORT_CODE_CHARS = string.ascii_uppercase + string.digits
 SHORT_CODE_LENGTH = 6
+
+
+def _stripe_idempotency_key(prefix: str, *parts: object, window_minutes: int = 5) -> str:
+    """Build a deterministic Stripe idempotency key within a short time window."""
+    now = datetime.now(timezone.utc)
+    bucket = int(now.timestamp() // (window_minutes * 60))
+    payload = "|".join([prefix, str(bucket), *[str(p or "") for p in parts]])
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:48]
+    return f"{prefix}_{digest}"
+
+
+def _stripe_checkout_error_response(context: str, exc: Exception, **log_fields):
+    """Log Stripe errors internally; return a safe user-facing message."""
+    logger.error("%s: %s | fields=%s", context, exc, log_fields)
+    raise HTTPException(
+        status_code=500,
+        detail="Could not start Stripe checkout right now. Please try again.",
+    )
 
 
 def _checkout_payment_method_types() -> list:
@@ -206,6 +227,14 @@ def create_public_event_ticket_checkout(
     start_time = ev.get("start_time") or ev.get("event_date") or ""
 
     try:
+        idempotency_key = _stripe_idempotency_key(
+            "event_public_checkout",
+            org_id,
+            req.event_id,
+            user["id"],
+            req.quantity,
+            price_cents,
+        )
         session = stripe.checkout.Session.create(
             payment_method_types=_checkout_payment_method_types(),
             mode="payment",
@@ -242,10 +271,17 @@ def create_public_event_ticket_checkout(
             success_url=f"{frontend_url}/events/{req.event_id}?payment=success&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{frontend_url}/events/{req.event_id}?payment=cancelled",
             **({"payment_intent_data": payment_intent_data} if payment_intent_data else {}),
+            idempotency_key=idempotency_key,
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        _stripe_checkout_error_response(
+            "Stripe public event checkout error",
+            e,
+            org_id=org_id,
+            event_id=req.event_id,
+            user_id=user["id"],
+        )
 
 
 @router.post("/public/confirm-event-ticket")
@@ -367,6 +403,14 @@ def create_event_ticket_checkout(
     start_time = ev.get("start_time") or ev.get("event_date") or ""
 
     try:
+        idempotency_key = _stripe_idempotency_key(
+            "event_org_checkout",
+            org_id,
+            req.event_id,
+            user["id"],
+            req.quantity,
+            price_cents,
+        )
         session = stripe.checkout.Session.create(
             payment_method_types=_checkout_payment_method_types(),
             mode="payment",
@@ -403,10 +447,17 @@ def create_event_ticket_checkout(
             success_url=f"{frontend_url}/org/{org_id}/calendar/{req.event_id}?payment=success&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{frontend_url}/org/{org_id}/calendar/{req.event_id}?payment=cancelled",
             **({"payment_intent_data": payment_intent_data} if payment_intent_data else {}),
+            idempotency_key=idempotency_key,
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        _stripe_checkout_error_response(
+            "Stripe org event checkout error",
+            e,
+            org_id=org_id,
+            event_id=req.event_id,
+            user_id=user["id"],
+        )
 
 
 @router.post("/{org_id}/checkout")
@@ -493,6 +544,14 @@ def create_dues_checkout(
             stripe.api_key = stripe_key
             total_cents = int(round(charge_amount * 100))
             payment_intent_data = _payment_intent_data_for_org(db, org_id, total_cents)
+            idempotency_key = _stripe_idempotency_key(
+                "dues_checkout",
+                org_id,
+                req.plan_id,
+                member_id,
+                user["id"],
+                total_cents,
+            )
             session = stripe.checkout.Session.create(
                 payment_method_types=_checkout_payment_method_types(),
                 line_items=[{
@@ -517,10 +576,18 @@ def create_dues_checkout(
                     ),
                 },
                 **({"payment_intent_data": payment_intent_data} if payment_intent_data else {}),
+                idempotency_key=idempotency_key,
             )
             return {"checkout_url": session.url, "session_id": session.id}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            _stripe_checkout_error_response(
+                "Stripe dues checkout error",
+                e,
+                org_id=org_id,
+                plan_id=req.plan_id,
+                member_id=member_id,
+                user_id=user["id"],
+            )
 
     # No Stripe configured - create mock pending payment for demo
     session_id = f"mock_{generate_uuid()}"
