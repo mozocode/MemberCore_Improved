@@ -42,6 +42,12 @@ PRO_PLAN_MONTHLY = "pro_monthly"
 PRO_PLAN_ANNUAL = "pro_annual"
 
 
+def _stripe_metric(event_name: str, **fields):
+    """Emit structured Stripe metric-like log events."""
+    flat = " ".join(f"{k}={fields[k]}" for k in sorted(fields.keys()) if fields[k] is not None)
+    logger.info("stripe_metric event=%s %s", event_name, flat)
+
+
 def _get_price_id_for_plan(plan: str) -> Optional[str]:
     """Return Stripe Price ID for the given plan. Uses env STRIPE_PRICE_PRO_MONTHLY / STRIPE_PRICE_PRO_ANNUAL."""
     if plan == PRO_PLAN_ANNUAL:
@@ -129,6 +135,49 @@ def _get_stripe():
     import stripe
     stripe.api_key = key
     return stripe
+
+
+def _get_price_display_catalog(stripe_mod) -> dict:
+    """Return canonical pricing display data from configured Stripe Price IDs."""
+    configured = {
+        PRO_PLAN_MONTHLY: os.getenv("STRIPE_PRICE_PRO_MONTHLY"),
+        PRO_PLAN_ANNUAL: os.getenv("STRIPE_PRICE_PRO_ANNUAL"),
+    }
+    intervals = {PRO_PLAN_MONTHLY: "month", PRO_PLAN_ANNUAL: "year"}
+    out = {}
+    for plan, price_id in configured.items():
+        if not price_id:
+            out[plan] = {"price_id": None, "active": False}
+            continue
+        try:
+            price = stripe_mod.Price.retrieve(price_id)
+            recurring = getattr(price, "recurring", None) or {}
+            interval = recurring.get("interval") if hasattr(recurring, "get") else getattr(recurring, "interval", None)
+            unit_amount = getattr(price, "unit_amount", None)
+            currency = getattr(price, "currency", "usd")
+            active = bool(getattr(price, "active", False))
+            interval_ok = interval == intervals[plan]
+            out[plan] = {
+                "price_id": price_id,
+                "unit_amount_cents": unit_amount,
+                "currency": (currency or "usd").lower(),
+                "interval": interval,
+                "active": active and interval_ok,
+                "interval_mismatch": not interval_ok,
+            }
+            if not interval_ok:
+                _stripe_metric(
+                    "billing_price_interval_mismatch",
+                    plan=plan,
+                    price_id=price_id,
+                    expected_interval=intervals[plan],
+                    actual_interval=interval,
+                )
+        except Exception as e:
+            out[plan] = {"price_id": price_id, "active": False, "error": "unavailable"}
+            logger.warning("Could not load Stripe price for plan=%s price_id=%s: %s", plan, price_id, e)
+            _stripe_metric("billing_price_lookup_failed", plan=plan, price_id=price_id)
+    return out
 
 
 def _stripe_checkout_error_response(context: str, exc: Exception):
@@ -306,6 +355,30 @@ def get_billing_state(
         "stripe_connect_ready": stripe_connect_ready,
         "is_billing_exempt": bool(d.get("platform_admin_owned") or d.get("billing_exempt")),
     }
+
+
+@router.get("/{org_id}/billing/pricing")
+def get_billing_pricing(
+    org_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Return canonical billing prices from Stripe for consistent frontend display."""
+    db = get_firestore()
+    members = list(
+        db.collection("members")
+        .where("user_id", "==", user_id)
+        .where("organization_id", "==", org_id)
+        .where("status", "==", "approved")
+        .limit(1)
+        .get()
+    )
+    if not members:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    stripe = _get_stripe()
+    catalog = _get_price_display_catalog(stripe)
+    _stripe_metric("billing_pricing_read", org_id=org_id)
+    return {"org_id": org_id, "pricing": catalog}
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +606,11 @@ def create_checkout_session(
     od = org_doc.to_dict()
 
     stripe = _get_stripe()
+    catalog = _get_price_display_catalog(stripe)
+    selected = catalog.get(plan) or {}
+    if not selected.get("active") or selected.get("price_id") != price_id:
+        _stripe_metric("billing_checkout_blocked_misconfigured_price", org_id=org_id, plan=plan, price_id=price_id)
+        raise HTTPException(status_code=503, detail="Stripe pricing is temporarily unavailable. Please try again.")
     customer_id = od.get("stripe_customer_id")
     if not customer_id:
         customer = stripe.Customer.create(
@@ -575,7 +653,21 @@ def create_checkout_session(
             metadata={"org_id": org_id, "type": "org_subscription", "plan": plan},
             idempotency_key=idempotency_key,
         )
-        return {"checkout_url": session.url, "session_id": session.id}
+        _stripe_metric(
+            "billing_checkout_created",
+            org_id=org_id,
+            plan=plan,
+            price_id=price_id,
+            session_id=session.id,
+        )
+        return {
+            "checkout_url": session.url,
+            "session_id": session.id,
+            "plan": plan,
+            "price_id": price_id,
+            "unit_amount_cents": selected.get("unit_amount_cents"),
+            "currency": selected.get("currency"),
+        }
     except Exception as e:
         _stripe_checkout_error_response("Stripe checkout session error", e)
 
@@ -612,10 +704,25 @@ def create_subscription_checkout(
             "stripe_customer_id": customer_id,
         })
 
-    # Get or create the Pro price in Stripe
-    price_id = os.getenv("STRIPE_PRO_PRICE_ID")
-    if not price_id:
-        price_id = _get_or_create_pro_price(stripe)
+    requested_plan = (req.plan or "pro").strip().lower()
+    catalog = _get_price_display_catalog(stripe)
+    selected = None
+    if requested_plan in (PRO_PLAN_MONTHLY, PRO_PLAN_ANNUAL):
+        selected = catalog.get(requested_plan) or {}
+        if not selected.get("active") or not selected.get("price_id"):
+            _stripe_metric(
+                "billing_checkout_blocked_misconfigured_price",
+                org_id=org_id,
+                plan=requested_plan,
+                price_id=selected.get("price_id"),
+            )
+            raise HTTPException(status_code=503, detail="Stripe pricing is temporarily unavailable. Please try again.")
+        price_id = selected["price_id"]
+    else:
+        # Backward-compatible path for legacy web callers still sending "pro".
+        price_id = os.getenv("STRIPE_PRO_PRICE_ID")
+        if not price_id:
+            price_id = _get_or_create_pro_price(stripe)
 
     try:
         idempotency_key = _stripe_idempotency_key(
@@ -637,10 +744,28 @@ def create_subscription_checkout(
                 "metadata": {"org_id": org_id},
                 "trial_period_days": int(os.getenv("STRIPE_TRIAL_DAYS", "14")),
             },
-            metadata={"org_id": org_id, "type": "org_subscription"},
+            metadata={
+                "org_id": org_id,
+                "type": "org_subscription",
+                "plan": requested_plan if requested_plan in (PRO_PLAN_MONTHLY, PRO_PLAN_ANNUAL) else "pro",
+            },
             idempotency_key=idempotency_key,
         )
-        return {"checkout_url": session.url, "session_id": session.id}
+        _stripe_metric(
+            "billing_checkout_created",
+            org_id=org_id,
+            plan=requested_plan,
+            price_id=price_id,
+            session_id=session.id,
+        )
+        return {
+            "checkout_url": session.url,
+            "session_id": session.id,
+            "plan": requested_plan,
+            "price_id": price_id,
+            "unit_amount_cents": (selected or {}).get("unit_amount_cents"),
+            "currency": (selected or {}).get("currency"),
+        }
     except Exception as e:
         _stripe_checkout_error_response("Stripe checkout error", e)
 
@@ -718,7 +843,7 @@ async def stripe_subscription_webhook(request: Request):
     event_type = event["type"]
     obj = event["data"]["object"]
 
-    logger.info("Stripe subscription webhook: %s", event_type)
+    logger.info("stripe_subscription_webhook_received event_type=%s", event_type)
 
     if event_type == "checkout.session.completed":
         _handle_checkout_completed(db, obj)
@@ -757,21 +882,34 @@ async def stripe_connect_webhook(request: Request):
     except stripe.SignatureVerificationError:
         return JSONResponse(content={"detail": "Invalid signature"}, status_code=400)
 
-    if event.get("type") != "account.updated":
+    event_type = event.get("type")
+    if event_type != "account.updated":
+        logger.info("stripe_connect_webhook_ignored event_type=%s", event_type)
         return {"status": "ok"}
 
     account = event["data"]["object"]
     account_id = account.get("id")
     if not account_id:
+        logger.warning("stripe_connect_webhook_missing_account_id event_type=%s", event_type)
         return {"status": "ok"}
 
     db = get_firestore()
     org_id = _find_org_by_connected_account(db, account_id)
     if not org_id:
+        logger.info(
+            "stripe_connect_webhook_unmapped_account event_type=%s account_id=%s",
+            event_type,
+            account_id,
+        )
         return {"status": "ok"}
 
     _upsert_connect_state(db, org_id, account)
-    logger.info("Stripe connect webhook synced org %s account %s", org_id, account_id)
+    logger.info(
+        "stripe_connect_webhook_synced event_type=%s org_id=%s account_id=%s",
+        event_type,
+        org_id,
+        account_id,
+    )
     return {"status": "ok"}
 
 

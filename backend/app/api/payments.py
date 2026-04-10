@@ -125,16 +125,47 @@ def _record_dues_payment_transactional(
             if member_ref:
                 member_doc = member_ref.get(transaction=transaction)
                 if not member_doc.exists:
+                    logger.warning(
+                        "stripe_payment_record_skipped member_missing org_id=%s member_id=%s session_id=%s payment_intent=%s",
+                        org_id,
+                        member_id,
+                        stripe_session_id,
+                        stripe_payment_id,
+                    )
                     return {"status": "pending"}
 
             existing = _find_existing(stripe_session_id, stripe_payment_id, transaction=transaction)
             if existing:
+                logger.info(
+                    "stripe_payment_record_deduped org_id=%s session_id=%s payment_intent=%s existing_payment_id=%s",
+                    org_id,
+                    stripe_session_id,
+                    stripe_payment_id,
+                    existing.id,
+                )
                 return {"status": "completed", "payment_id": existing.id}
 
             requested = max(0.0, _to_float(amount, 0.0))
             remaining = _remaining_cap(transaction=transaction)
             effective_amount = min(requested, remaining) if remaining is not None else requested
+            if remaining is not None and effective_amount < requested:
+                logger.info(
+                    "stripe_payment_amount_clamped org_id=%s session_id=%s payment_intent=%s requested_amount=%.2f remaining_amount=%.2f recorded_amount=%.2f",
+                    org_id,
+                    stripe_session_id,
+                    stripe_payment_id,
+                    requested,
+                    remaining,
+                    effective_amount,
+                )
             if effective_amount <= 0:
+                logger.info(
+                    "stripe_payment_record_skipped_zero_remaining org_id=%s session_id=%s payment_intent=%s requested_amount=%.2f",
+                    org_id,
+                    stripe_session_id,
+                    stripe_payment_id,
+                    requested,
+                )
                 return {"status": "completed", "payment_id": None}
 
             payment_id = generate_uuid()
@@ -155,6 +186,14 @@ def _record_dues_payment_transactional(
             transaction.set(payments.document(payment_id), payload)
             if member_ref:
                 transaction.update(member_ref, {"updated_at": now, "last_payment_at": now})
+            logger.info(
+                "stripe_payment_recorded org_id=%s session_id=%s payment_intent=%s payment_id=%s amount=%.2f",
+                org_id,
+                stripe_session_id,
+                stripe_payment_id,
+                payment_id,
+                round(effective_amount, 2),
+            )
             return {"status": "completed", "payment_id": payment_id}
 
         tx = db.transaction()
@@ -163,12 +202,36 @@ def _record_dues_payment_transactional(
         logger.warning("Transactional dues payment fallback used: %s", e)
         existing = _find_existing(stripe_session_id, stripe_payment_id)
         if existing:
+            logger.info(
+                "stripe_payment_record_deduped_fallback org_id=%s session_id=%s payment_intent=%s existing_payment_id=%s",
+                org_id,
+                stripe_session_id,
+                stripe_payment_id,
+                existing.id,
+            )
             return {"status": "completed", "payment_id": existing.id}
 
         requested = max(0.0, _to_float(amount, 0.0))
         remaining = _remaining_cap()
         effective_amount = min(requested, remaining) if remaining is not None else requested
+        if remaining is not None and effective_amount < requested:
+            logger.info(
+                "stripe_payment_amount_clamped_fallback org_id=%s session_id=%s payment_intent=%s requested_amount=%.2f remaining_amount=%.2f recorded_amount=%.2f",
+                org_id,
+                stripe_session_id,
+                stripe_payment_id,
+                requested,
+                remaining,
+                effective_amount,
+            )
         if effective_amount <= 0:
+            logger.info(
+                "stripe_payment_record_skipped_zero_remaining_fallback org_id=%s session_id=%s payment_intent=%s requested_amount=%.2f",
+                org_id,
+                stripe_session_id,
+                stripe_payment_id,
+                requested,
+            )
             return {"status": "completed", "payment_id": None}
 
         payment_id = generate_uuid()
@@ -189,6 +252,14 @@ def _record_dues_payment_transactional(
         payments.document(payment_id).set(payload)
         if member_ref:
             member_ref.update({"updated_at": now, "last_payment_at": now})
+        logger.info(
+            "stripe_payment_recorded_fallback org_id=%s session_id=%s payment_intent=%s payment_id=%s amount=%.2f",
+            org_id,
+            stripe_session_id,
+            stripe_payment_id,
+            payment_id,
+            round(effective_amount, 2),
+        )
         return {"status": "completed", "payment_id": payment_id}
 
 

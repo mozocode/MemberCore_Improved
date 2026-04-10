@@ -2,6 +2,7 @@ import sys
 import types
 import json
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from app.api import payments as payments_api
 from app.api import billing as billing_api
@@ -49,6 +50,9 @@ class _FakeQuery:
 
     def limit(self, n):
         return _FakeQuery(self._collection, list(self._filters), n)
+
+    def get(self):
+        return self.stream()
 
     def stream(self, transaction=None):  # noqa: ARG002 - parity with firestore API
         out = []
@@ -249,3 +253,104 @@ def test_subscription_webhook_rejects_invalid_signature(monkeypatch):
 
     assert response.status_code == 400
     assert json.loads(response.body.decode("utf-8"))["detail"] == "Invalid signature"
+
+
+def test_billing_state_refreshes_stale_connect_status(monkeypatch):
+    db = _FakeDB()
+    monkeypatch.setattr(billing_api, "get_firestore", lambda: db)
+
+    org_id = "org-connect-1"
+    user_id = "user-connect-1"
+    old = datetime.now(timezone.utc) - timedelta(hours=1)
+
+    db.collection("members").document("m1").set(
+        {
+            "id": "m1",
+            "organization_id": org_id,
+            "user_id": user_id,
+            "status": "approved",
+            "role": "owner",
+        }
+    )
+    db.collection("organizations").document(org_id).set(
+        {
+            "id": org_id,
+            "name": "Org",
+            "is_pro": False,
+            "billing_status": "inactive",
+            "stripe_connected_account_id": "acct_123",
+            "stripe_connect_charges_enabled": False,
+            "stripe_connect_payouts_enabled": False,
+            "stripe_connect_updated_at": old,
+        }
+    )
+
+    class _FakeAccount:
+        id = "acct_123"
+        details_submitted = True
+        charges_enabled = True
+        payouts_enabled = True
+
+    class _FakeStripe:
+        class Account:
+            @staticmethod
+            def retrieve(account_id):  # noqa: ARG004
+                return _FakeAccount()
+
+    monkeypatch.setattr(billing_api, "_get_stripe", lambda: _FakeStripe())
+    result = billing_api.get_billing_state(org_id, user_id)
+
+    assert result["stripe_connect_ready"] is True
+    org = db.collection("organizations").document(org_id).get().to_dict()
+    assert org["stripe_connect_charges_enabled"] is True
+    assert org["stripe_connect_payouts_enabled"] is True
+
+
+def test_billing_state_refreshes_missing_connect_timestamp(monkeypatch):
+    db = _FakeDB()
+    monkeypatch.setattr(billing_api, "get_firestore", lambda: db)
+
+    org_id = "org-connect-2"
+    user_id = "user-connect-2"
+
+    db.collection("members").document("m2").set(
+        {
+            "id": "m2",
+            "organization_id": org_id,
+            "user_id": user_id,
+            "status": "approved",
+            "role": "owner",
+        }
+    )
+    db.collection("organizations").document(org_id).set(
+        {
+            "id": org_id,
+            "name": "Org 2",
+            "is_pro": False,
+            "billing_status": "inactive",
+            "stripe_connected_account_id": "acct_456",
+            "stripe_connect_charges_enabled": False,
+            "stripe_connect_payouts_enabled": False,
+            # intentionally no stripe_connect_updated_at
+        }
+    )
+
+    class _FakeAccount:
+        id = "acct_456"
+        details_submitted = True
+        charges_enabled = True
+        payouts_enabled = True
+
+    class _FakeStripe:
+        class Account:
+            @staticmethod
+            def retrieve(account_id):  # noqa: ARG004
+                return _FakeAccount()
+
+    monkeypatch.setattr(billing_api, "_get_stripe", lambda: _FakeStripe())
+    result = billing_api.get_billing_state(org_id, user_id)
+
+    assert result["stripe_connect_ready"] is True
+    org = db.collection("organizations").document(org_id).get().to_dict()
+    assert org["stripe_connect_charges_enabled"] is True
+    assert org["stripe_connect_payouts_enabled"] is True
