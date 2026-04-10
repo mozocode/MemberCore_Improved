@@ -269,6 +269,9 @@ def get_billing_state(
 
     if pending_updates:
         _sync_billing_to_org(db, org_id, pending_updates)
+        d = {**d, **pending_updates}
+
+    d = _refresh_connect_state_if_stale(db, org_id, d)
 
     billing_plan = d.get("billing_plan")  # 'pro_monthly' | 'pro_annual' when Pro
     stripe_connected_account_id = d.get("stripe_connected_account_id")
@@ -331,6 +334,48 @@ def _upsert_connect_state(db, org_id: str, account) -> dict:
     }
     db.collection("organizations").document(org_id).update(data)
     return data
+
+
+def _find_org_by_connected_account(db, account_id: str) -> Optional[str]:
+    orgs = list(
+        db.collection("organizations")
+        .where("stripe_connected_account_id", "==", account_id)
+        .limit(1)
+        .stream()
+    )
+    if orgs:
+        return orgs[0].id
+    return None
+
+
+def _refresh_connect_state_if_stale(db, org_id: str, org_data: dict) -> dict:
+    """Refresh Stripe Connect capability flags when missing or stale."""
+    account_id = org_data.get("stripe_connected_account_id")
+    if not account_id:
+        return org_data
+
+    should_refresh = False
+    updated_at = org_data.get("stripe_connect_updated_at")
+    if not updated_at:
+        should_refresh = True
+    elif isinstance(updated_at, datetime):
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+        should_refresh = dt < cutoff
+    else:
+        should_refresh = True
+
+    if not should_refresh:
+        return org_data
+
+    try:
+        stripe = _get_stripe()
+        account = stripe.Account.retrieve(account_id)
+        fresh = _upsert_connect_state(db, org_id, account)
+        return {**org_data, **fresh}
+    except Exception as e:
+        logger.warning("Could not refresh Stripe Connect state for org %s: %s", org_id, e)
+        return org_data
 
 
 @router.post("/{org_id}/billing/connect/onboarding")
@@ -423,6 +468,33 @@ def create_connect_login_link(
         )
 
 
+@router.post("/{org_id}/billing/connect/sync")
+def sync_connect_status(
+    org_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Force-refresh Stripe Connect flags from Stripe account capabilities."""
+    db = get_firestore()
+    _require_org_owner_or_admin(db, org_id, user["id"])
+
+    org_doc = db.collection("organizations").document(org_id).get()
+    if not org_doc.exists:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    od = org_doc.to_dict() or {}
+    account_id = od.get("stripe_connected_account_id")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Stripe payouts are not connected for this organization")
+
+    stripe = _get_stripe()
+    try:
+        account = stripe.Account.retrieve(account_id)
+        data = _upsert_connect_state(db, org_id, account)
+        return {"ok": True, **data}
+    except Exception as e:
+        logger.error("Stripe Connect sync error for org %s: %s", org_id, e)
+        raise HTTPException(status_code=500, detail="Could not refresh Stripe payouts status. Please try again.")
+
+
 @router.post("/{org_id}/billing/create-checkout-session")
 def create_checkout_session(
     org_id: str,
@@ -463,8 +535,11 @@ def create_checkout_session(
             "stripe_customer_id": customer_id,
         })
 
-    success_url = os.getenv("BILLING_SUCCESS_URL", "https://membercore.io/billing/success")
-    cancel_url = os.getenv("BILLING_CANCEL_URL", "https://membercore.io/billing/cancel")
+    frontend_url = os.getenv("FRONTEND_URL", "https://membercore.io").rstrip("/")
+    default_success_url = f"{frontend_url}/org/{org_id}/settings?tab=club&billing=success"
+    default_cancel_url = f"{frontend_url}/org/{org_id}/settings?tab=club&billing=cancel"
+    success_url = os.getenv("BILLING_SUCCESS_URL", default_success_url)
+    cancel_url = os.getenv("BILLING_CANCEL_URL", default_cancel_url)
 
     subscription_data = {"metadata": {"org_id": org_id, "plan": plan}}
     trial_days = os.getenv("STRIPE_TRIAL_DAYS")
@@ -629,6 +704,45 @@ async def stripe_subscription_webhook(request: Request):
     elif event_type == "customer.subscription.updated":
         _handle_subscription_updated(db, obj)
 
+    return {"status": "ok"}
+
+
+@router.post("/webhook/connect")
+async def stripe_connect_webhook(request: Request):
+    """Handle Stripe Connect account capability updates (account.updated)."""
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+    webhook_secret = os.getenv("STRIPE_CONNECT_WEBHOOK_SECRET")
+    if not webhook_secret:
+        webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    if not webhook_secret:
+        return JSONResponse(content={"detail": "Webhook not configured"}, status_code=503)
+
+    import stripe
+    stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except ValueError:
+        return JSONResponse(content={"detail": "Invalid payload"}, status_code=400)
+    except stripe.SignatureVerificationError:
+        return JSONResponse(content={"detail": "Invalid signature"}, status_code=400)
+
+    if event.get("type") != "account.updated":
+        return {"status": "ok"}
+
+    account = event["data"]["object"]
+    account_id = account.get("id")
+    if not account_id:
+        return {"status": "ok"}
+
+    db = get_firestore()
+    org_id = _find_org_by_connected_account(db, account_id)
+    if not org_id:
+        return {"status": "ok"}
+
+    _upsert_connect_state(db, org_id, account)
+    logger.info("Stripe connect webhook synced org %s account %s", org_id, account_id)
     return {"status": "ok"}
 
 

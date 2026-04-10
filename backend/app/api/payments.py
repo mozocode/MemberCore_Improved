@@ -547,6 +547,32 @@ def get_checkout_status(
 ):
     """Verify Stripe checkout session and record payment."""
     db = get_firestore()
+
+    def _existing_payment_by_session(session_key: str):
+        docs = list(
+            db.collection("payments")
+            .where("organization_id", "==", org_id)
+            .where("stripe_session_id", "==", session_key)
+            .limit(1)
+            .stream()
+        )
+        if docs:
+            return docs[0].to_dict() or {"id": docs[0].id}
+        return None
+
+    def _existing_payment_by_intent(intent_id: str):
+        if not intent_id:
+            return None
+        docs = list(
+            db.collection("payments")
+            .where("stripe_payment_id", "==", intent_id)
+            .limit(1)
+            .stream()
+        )
+        if docs:
+            return docs[0].to_dict() or {"id": docs[0].id}
+        return None
+
     if session_id.startswith("mock_"):
         # Mock session - mark as completed for demo
         sess_ref = db.collection("payment_sessions").document(session_id)
@@ -554,6 +580,10 @@ def get_checkout_status(
         if sess_doc.exists:
             sd = sess_doc.to_dict()
             if sd.get("user_id") == user_id and sd.get("org_id") == org_id:
+                existing = _existing_payment_by_session(session_id)
+                if existing:
+                    sess_ref.update({"status": "completed"})
+                    return {"status": "completed", "payment_id": existing.get("id")}
                 # Record payment
                 payment_id = generate_uuid()
                 now = datetime.now(timezone.utc)
@@ -582,6 +612,12 @@ def get_checkout_status(
             if session.payment_status == "paid" and session.metadata:
                 meta = session.metadata
                 if meta.get("org_id") == org_id and meta.get("user_id") == user_id:
+                    existing = _existing_payment_by_session(session_id)
+                    if not existing:
+                        existing = _existing_payment_by_intent(session.payment_intent)
+                    if existing:
+                        return {"status": "completed", "payment_id": existing.get("id")}
+
                     payment_id = generate_uuid()
                     now = datetime.now(timezone.utc)
                     db.collection("payments").document(payment_id).set({
@@ -591,6 +627,7 @@ def get_checkout_status(
                         "plan_id": meta.get("plan_id"),
                         "amount": float(session.amount_total or 0) / 100,
                         "payment_method": "stripe",
+                        "stripe_session_id": session_id,
                         "stripe_payment_id": session.payment_intent,
                         "recorded_by": user_id,
                         "created_at": now,
