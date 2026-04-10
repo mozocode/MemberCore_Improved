@@ -31,14 +31,10 @@ export default defineConfig({
           if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) return 'react-vendor'
           if (id.includes('node_modules/react-router')) return 'router'
 
-          // Keep map stack isolated so non-map routes never download it.
-          if (
-            id.includes('/node_modules/mapbox-gl/') ||
-            id.includes('/node_modules/@mapbox/') ||
-            id.includes('/node_modules/react-map-gl/')
-          ) {
-            return 'mapbox'
-          }
+          // Keep map stack isolated and split heavy map libraries for faster parse.
+          if (id.includes('/node_modules/mapbox-gl/')) return 'mapbox-core'
+          if (id.includes('/node_modules/react-map-gl/')) return 'mapbox-react'
+          if (id.includes('/node_modules/@mapbox/')) return 'mapbox-sdk'
 
           // QR/check-in libs are heavy and only used in settings flows.
           if (
