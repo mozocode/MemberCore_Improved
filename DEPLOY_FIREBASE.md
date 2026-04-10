@@ -183,3 +183,55 @@ If the live site shows **500** on `/api/auth/signin` or **CORS policy** blocking
 | Build frontend for prod | `VITE_BACKEND_URL=<backend-url>/api npm run build` (in `frontend/`) |
 
 After this, your app is “hosted on Firebase” in the sense that the UI is on Firebase Hosting and the API runs on Cloud Run in the same GCP project as Firebase/Firestore.
+
+---
+
+## Mobile OTA policy (Expo / EAS Update)
+
+MemberCore now supports OTA updates for mobile JS changes.
+
+- **Production channel:** `production`
+- **Preview channel:** `preview` (optional QA before prod)
+- **Smart OTA script:** `scripts/publish-ota-smart.sh`
+
+### Recommended workflow
+
+For normal production deploys:
+
+```bash
+npm run deploy:hosting
+```
+
+This now:
+1. Deploys Firebase Hosting
+2. Runs smart OTA detection
+3. Publishes to Expo `production` only if changes impact mobile/shared/backend behavior
+4. Skips OTA automatically for web-only changes
+
+### Manual OTA commands
+
+```bash
+npm run ota:production
+npm run ota:preview
+npm run ota:development
+npm run ota:smart
+```
+
+### One-time binary refresh
+
+When OTA is first enabled, publish one new store/internal binary so installed apps are guaranteed OTA-capable:
+
+```bash
+npm run build:mobile:refresh
+```
+
+### CI automation
+
+GitHub Actions workflow is available at:
+
+`/.github/workflows/deploy-hosting-and-ota.yml`
+
+Required repository secrets:
+
+- `FIREBASE_TOKEN`
+- `EXPO_TOKEN`

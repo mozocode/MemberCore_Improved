@@ -1,0 +1,42 @@
+name: Deploy Hosting + Smart OTA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate required secrets
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          test -n "$FIREBASE_TOKEN" || (echo "Missing FIREBASE_TOKEN secret" && exit 1)
+          test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN secret" && exit 1)
+
+      - name: Deploy Hosting
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: npx firebase-tools deploy --only hosting --project membercore-f0b3f --token "$FIREBASE_TOKEN"
+
+      - name: Publish Smart OTA (production)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: bash scripts/publish-ota-smart.sh "${{ github.event.before }}..${{ github.sha }}" production --non-interactive

@@ -14,6 +14,7 @@
     "build:ios": "cd apps/mobile && npx eas-cli build --profile testflight --platform ios",
     "build:apk": "cd apps/mobile && npx eas-cli build --profile preview --platform android",
     "build:play": "cd apps/mobile && npx eas-cli build --profile production --platform android",
+    "build:mobile:refresh": "cd apps/mobile && npx eas-cli build --profile production --platform all --non-interactive",
     "submit:testflight": "cd apps/mobile && npx eas-cli submit --platform ios --profile testflight --latest",
     "submit:play": "bash scripts/submit-android-play.sh",
     "ota:preview": "cd apps/mobile && npx eas-cli update --branch preview --auto",
