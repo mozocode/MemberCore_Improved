@@ -21,6 +21,7 @@ interface OrganizationSidebarProps {
   billingActive?: boolean
   unreadChatCount?: number
   unreadMessagesCount?: number
+  pendingApprovalsCount?: number
   onClose?: () => void
   isMobile?: boolean
 }
@@ -43,6 +44,7 @@ export function OrganizationSidebar({
   billingActive = true,
   unreadChatCount = 0,
   unreadMessagesCount = 0,
+  pendingApprovalsCount = 0,
   onClose,
   isMobile,
 }: OrganizationSidebarProps) {
@@ -161,8 +163,20 @@ export function OrganizationSidebar({
           const isActive = activeSection === item.id
           const showBadge =
             (item.badge === 'unreadChatCount' && unreadChatCount > 0) ||
-            (item.badge === 'unreadMessagesCount' && unreadMessagesCount > 0)
-          const badgeCount = item.badge === 'unreadChatCount' ? unreadChatCount : item.badge === 'unreadMessagesCount' ? unreadMessagesCount : 0
+            (item.badge === 'unreadMessagesCount' && unreadMessagesCount > 0) ||
+            (
+              item.badge === 'pendingApprovalsCount' &&
+              pendingApprovalsCount > 0 &&
+              (role === 'owner' || role === 'admin')
+            )
+          const badgeCount =
+            item.badge === 'unreadChatCount'
+              ? unreadChatCount
+              : item.badge === 'unreadMessagesCount'
+                ? unreadMessagesCount
+                : item.badge === 'pendingApprovalsCount'
+                  ? pendingApprovalsCount
+                  : 0
           const Icon = item.icon
 
           return (

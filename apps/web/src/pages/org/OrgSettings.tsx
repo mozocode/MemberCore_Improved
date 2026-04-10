@@ -122,7 +122,7 @@ export function OrgSettings() {
   const navigate = useNavigate()
   const [role, setRole] = useState<OrgRole>('member')
   const [roleLoading, setRoleLoading] = useState(true)
-  const [_pendingCount, setPendingCount] = useState(0)
+  const [pendingCount, setPendingCount] = useState(0)
   const [billingActive, setBillingActive] = useState(true)
 
   useEffect(() => {
@@ -189,8 +189,20 @@ export function OrgSettings() {
                       <Icon size={24} className="text-zinc-400" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <span className="font-semibold text-white">{s.title}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white">{s.title}</span>
+                        {s.id === 'organization' && pendingCount > 0 && (
+                          <span className="inline-flex min-w-[20px] h-5 items-center justify-center rounded-full bg-red-500 text-white text-xs font-bold px-1.5">
+                            {pendingCount > 99 ? '99+' : pendingCount}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm text-zinc-500 mt-0.5">{s.description}</p>
+                      {s.id === 'organization' && pendingCount > 0 && (
+                        <p className="text-xs text-amber-400 mt-1">
+                          {pendingCount} pending member approval{pendingCount === 1 ? '' : 's'}
+                        </p>
+                      )}
                     </div>
                     <ChevronRight size={20} className="text-zinc-500 shrink-0 mt-1" />
                   </button>

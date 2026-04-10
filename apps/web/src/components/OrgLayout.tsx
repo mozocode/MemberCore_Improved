@@ -97,6 +97,7 @@ export function OrgLayout() {
   const [role, setRole] = useState<OrgRole>('member')
   const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0)
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -164,6 +165,32 @@ export function OrgLayout() {
     const interval = setInterval(fetchUnreadMessages, 30000)
     return () => clearInterval(interval)
   }, [orgId, location.pathname])
+
+  useEffect(() => {
+    if (!orgId) return
+    if (role !== 'owner' && role !== 'admin') {
+      setPendingApprovalsCount(0)
+      return
+    }
+    let cancelled = false
+    const fetchPendingApprovals = () => {
+      api
+        .get(`/organizations/${orgId}/members`, { params: { status_filter: 'pending' } })
+        .then((r) => {
+          if (cancelled) return
+          setPendingApprovalsCount(Array.isArray(r.data) ? r.data.length : 0)
+        })
+        .catch(() => {
+          if (!cancelled) setPendingApprovalsCount(0)
+        })
+    }
+    fetchPendingApprovals()
+    const interval = setInterval(fetchPendingApprovals, 30000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [orgId, role])
 
   useEffect(() => {
     const handleNewMessage = (e: CustomEvent<{ orgId: string }>) => {
@@ -265,6 +292,7 @@ export function OrgLayout() {
           billingActive={billingActive}
           unreadChatCount={unreadChatCount}
           unreadMessagesCount={unreadMessagesCount}
+          pendingApprovalsCount={pendingApprovalsCount}
         />
       </aside>
 
@@ -292,6 +320,7 @@ export function OrgLayout() {
           billingActive={billingActive}
           unreadChatCount={unreadChatCount}
           unreadMessagesCount={unreadMessagesCount}
+          pendingApprovalsCount={pendingApprovalsCount}
           onClose={() => setMobileMenuOpen(false)}
           isMobile
         />

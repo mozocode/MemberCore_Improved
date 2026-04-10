@@ -16,7 +16,7 @@ export interface SidebarMenuItem {
   label: string
   icon: LucideIcon
   route: string
-  badge?: 'unreadChatCount' | 'unreadMessagesCount'
+  badge?: 'unreadChatCount' | 'unreadMessagesCount' | 'pendingApprovalsCount'
   alwaysVisible: boolean
   permission: string
 }
@@ -94,6 +94,7 @@ export function getSidebarMenuItems(orgId: string, duesLabel: string): SidebarMe
       label: 'Settings',
       icon: Settings,
       route: `/org/${orgId}/settings`,
+      badge: 'pendingApprovalsCount',
       alwaysVisible: true,
       permission: 'settings.personal',
     },
