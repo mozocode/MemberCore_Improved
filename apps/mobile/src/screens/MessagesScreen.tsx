@@ -18,6 +18,7 @@ import { getApi } from '@membercore/services'
 import * as Haptics from 'expo-haptics'
 import * as ImagePicker from 'expo-image-picker'
 import * as FileSystem from 'expo-file-system'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ListSkeleton } from '../components/ListSkeleton'
 import { useAuth } from '../contexts/AuthContext'
 import type { OrgDrawerScreenProps } from '../navigation/types'
@@ -60,6 +61,7 @@ interface OrgMember {
 export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Messages'>) {
   const { orgId } = route.params
   const { user } = useAuth()
+  const insets = useSafeAreaInsets()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
@@ -74,6 +76,7 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
   const [memberSearch, setMemberSearch] = useState('')
   const [membersLoading, setMembersLoading] = useState(false)
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({})
+  const [composerHeight, setComposerHeight] = useState(96)
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flatListRef = useRef<FlatList>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -214,6 +217,34 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
     }
   }, [])
 
+  const handleDeleteMessage = useCallback(async (msg: DmMessage) => {
+    if (!activeConvId || !msg?.id) return
+    try {
+      await api.delete(`/organizations/${orgId}/dm/conversations/${activeConvId}/messages/${msg.id}`)
+      setMessages((prev) => prev.filter((m) => m.id !== msg.id))
+      fetchConversations()
+    } catch {
+      Alert.alert('Delete Failed', 'Could not delete that message. Please try again.')
+    }
+  }, [activeConvId, orgId, fetchConversations])
+
+  const openMessageActions = useCallback((msg: DmMessage) => {
+    Alert.alert(
+      'Message Actions',
+      'What would you like to do?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Message',
+          style: 'destructive',
+          onPress: () => {
+            handleDeleteMessage(msg)
+          },
+        },
+      ],
+    )
+  }, [handleDeleteMessage])
+
   const openNewMessageModal = useCallback(async () => {
     setShowNewMessage(true)
     setMembersLoading(true)
@@ -261,10 +292,10 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 96 : 0}
       >
         {/* Chat header */}
-        <View style={styles.chatHeader}>
+        <View style={[styles.chatHeader, { paddingLeft: 16 + insets.left, paddingRight: 16 + insets.right }]}>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => setActiveConvId(null)}
@@ -291,105 +322,132 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
           </View>
         </View>
 
-        {/* Messages */}
-        {msgLoading && messages.length === 0 ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color="#71717a" />
-          </View>
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={(m) => m.id}
-            contentContainerStyle={styles.msgList}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
-            initialNumToRender={20}
-            maxToRenderPerBatch={15}
-            windowSize={11}
-            removeClippedSubviews={true}
-            renderItem={({ item }) => {
-              const isMe = item.sender_id === user?.id
-              const messageText = item.content || item.text || ''
-              const messageTime = item.created_at || item.sent_at || ''
-              return (
-                <View style={[styles.dmBubbleRow, isMe && styles.dmBubbleRowMe]}>
-                  <View style={[styles.dmBubble, isMe ? styles.dmBubbleMe : styles.dmBubbleOther]}>
-                    {item.image_data_url ? (
-                      <Image
-                        source={{ uri: item.image_data_url }}
-                        style={styles.dmBubbleImage}
-                        resizeMode="cover"
-                      />
-                    ) : null}
-                    {messageText ? (
-                      <Text style={[styles.dmBubbleText, isMe && styles.dmBubbleTextMe]}>
-                        {messageText}
-                      </Text>
-                    ) : null}
-                    <Text style={styles.dmBubbleTime}>
-                      {messageTime ? new Date(messageTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
-                    </Text>
-                  </View>
-                </View>
-              )
-            }}
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Feather name="message-square" size={48} color="#71717a" style={{ opacity: 0.5 }} />
-                <Text style={styles.emptyText}>No messages yet. Say hello!</Text>
-              </View>
-            }
-          />
-        )}
-
-        {/* Input */}
-        {selectedImageDataUrl ? (
-          <View style={styles.attachmentPreview}>
-            <Image source={{ uri: selectedImageDataUrl }} style={styles.attachmentPreviewImage} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.attachmentPreviewName} numberOfLines={1}>
-                {selectedImageName || 'Image selected'}
-              </Text>
+        <View style={styles.chatBody}>
+          {/* Messages */}
+          {msgLoading && messages.length === 0 ? (
+            <View style={[styles.center, { paddingBottom: composerHeight }]}>
+              <ActivityIndicator size="large" color="#71717a" />
             </View>
-            <TouchableOpacity
-              onPress={() => {
-                setSelectedImageDataUrl(null)
-                setSelectedImageName(null)
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={(m) => m.id}
+              contentContainerStyle={[
+                styles.msgList,
+                { paddingBottom: composerHeight + 8, paddingLeft: 16 + insets.left, paddingRight: 16 + insets.right },
+              ]}
+              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+              initialNumToRender={20}
+              maxToRenderPerBatch={15}
+              windowSize={11}
+              removeClippedSubviews={true}
+              directionalLockEnabled
+              alwaysBounceHorizontal={false}
+              showsHorizontalScrollIndicator={false}
+              renderItem={({ item }) => {
+                const isMe = item.sender_id === user?.id
+                const messageText = item.content || item.text || ''
+                const messageTime = item.created_at || item.sent_at || ''
+                return (
+                  <View style={[styles.dmBubbleRow, isMe && styles.dmBubbleRowMe]}>
+                    <View style={[styles.dmBubbleStack, isMe && styles.dmBubbleStackMe]}>
+                      {isMe ? (
+                        <TouchableOpacity
+                          style={styles.dmMessageActionsInlineBtn}
+                          onPress={() => openMessageActions(item)}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Feather name="more-horizontal" size={16} color="#a1a1aa" />
+                        </TouchableOpacity>
+                      ) : null}
+                      <View style={[styles.dmBubble, isMe ? styles.dmBubbleMe : styles.dmBubbleOther]}>
+                        {item.image_data_url ? (
+                          <Image
+                            source={{ uri: item.image_data_url }}
+                            style={styles.dmBubbleImage}
+                            resizeMode="cover"
+                          />
+                        ) : null}
+                        {messageText ? (
+                          <Text style={[styles.dmBubbleText, isMe && styles.dmBubbleTextMe]}>
+                            {messageText}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.dmBubbleTime}>
+                          {messageTime ? new Date(messageTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )
               }}
-              style={styles.attachmentRemoveBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Feather name="x" size={16} color="#a1a1aa" />
-            </TouchableOpacity>
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Feather name="message-square" size={48} color="#71717a" style={{ opacity: 0.5 }} />
+                  <Text style={styles.emptyText}>No messages yet. Say hello!</Text>
+                </View>
+              }
+            />
+          )}
+
+          {/* Fixed composer */}
+          <View
+            style={[styles.chatComposer, { paddingBottom: Math.max(insets.bottom, 12) }]}
+            onLayout={(e) => {
+              const h = Math.ceil(e.nativeEvent.layout.height)
+              if (h > 0 && h !== composerHeight) setComposerHeight(h)
+            }}
+          >
+            {selectedImageDataUrl ? (
+              <View style={[styles.attachmentPreview, { paddingLeft: 16 + insets.left, paddingRight: 16 + insets.right }]}>
+                <Image source={{ uri: selectedImageDataUrl }} style={styles.attachmentPreviewImage} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.attachmentPreviewName} numberOfLines={1}>
+                    {selectedImageName || 'Image selected'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setSelectedImageDataUrl(null)
+                    setSelectedImageName(null)
+                  }}
+                  style={styles.attachmentRemoveBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Feather name="x" size={16} color="#a1a1aa" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            <View style={[styles.inputBar, { paddingLeft: 16 + insets.left, paddingRight: 16 + insets.right }]}>
+              <TouchableOpacity
+                style={styles.attachBtn}
+                onPress={pickImageForMessage}
+                disabled={sending}
+              >
+                <Feather name="paperclip" size={18} color="#d4d4d8" />
+              </TouchableOpacity>
+              <TextInput
+                style={styles.input}
+                placeholder="Type a message..."
+                placeholderTextColor="#71717a"
+                value={input}
+                onChangeText={handleInputChange}
+                multiline
+              />
+              <TouchableOpacity
+                style={[styles.sendBtn, ((!input.trim() && !selectedImageDataUrl) || sending) && styles.sendBtnDisabled]}
+                onPress={handleSend}
+                disabled={(!input.trim() && !selectedImageDataUrl) || sending}
+              >
+                {sending ? (
+                  <ActivityIndicator size="small" color="#000000" />
+                ) : (
+                  <Feather name="send" size={18} color="#000000" />
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
-        ) : null}
-        <View style={styles.inputBar}>
-          <TouchableOpacity
-            style={styles.attachBtn}
-            onPress={pickImageForMessage}
-            disabled={sending}
-          >
-            <Feather name="paperclip" size={18} color="#d4d4d8" />
-          </TouchableOpacity>
-          <TextInput
-            style={styles.input}
-            placeholder="Type a message..."
-            placeholderTextColor="#71717a"
-            value={input}
-            onChangeText={handleInputChange}
-            multiline
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, ((!input.trim() && !selectedImageDataUrl) || sending) && styles.sendBtnDisabled]}
-            onPress={handleSend}
-            disabled={(!input.trim() && !selectedImageDataUrl) || sending}
-          >
-            {sending ? (
-              <ActivityIndicator size="small" color="#000000" />
-            ) : (
-              <Feather name="send" size={18} color="#000000" />
-            )}
-          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     )
@@ -533,7 +591,7 @@ export function MessagesScreen({ route, navigation }: OrgDrawerScreenProps<'Mess
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000000' },
+  container: { flex: 1, backgroundColor: '#000000', overflow: 'hidden' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000000' },
 
   headerBtn: {
@@ -584,6 +642,7 @@ const styles = StyleSheet.create({
   unreadText: { color: '#ffffff', fontSize: 11, fontWeight: '700' },
 
   // Chat view
+  chatBody: { flex: 1, position: 'relative', overflow: 'hidden' },
   chatHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -609,9 +668,11 @@ const styles = StyleSheet.create({
   typingText: { color: '#71717a', fontSize: 12, marginTop: 1 },
 
   // Messages
-  msgList: { paddingHorizontal: 16, paddingVertical: 12 },
+  msgList: { paddingVertical: 12 },
   dmBubbleRow: { flexDirection: 'row', marginBottom: 8 },
   dmBubbleRowMe: { justifyContent: 'flex-end' },
+  dmBubbleStack: { alignItems: 'flex-start' },
+  dmBubbleStackMe: { alignItems: 'flex-end' },
   dmBubble: { maxWidth: '80%', borderRadius: 16, padding: 12, paddingBottom: 6 },
   dmBubbleMe: { backgroundColor: '#3b82f6', borderBottomRightRadius: 4 },
   dmBubbleOther: { backgroundColor: '#18181b', borderWidth: 1, borderColor: '#27272a', borderBottomLeftRadius: 4 },
@@ -625,6 +686,18 @@ const styles = StyleSheet.create({
   dmBubbleText: { color: '#d4d4d8', fontSize: 15, lineHeight: 20 },
   dmBubbleTextMe: { color: '#ffffff' },
   dmBubbleTime: { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 4, textAlign: 'right' },
+  dmMessageActionsInlineBtn: {
+    width: 30,
+    height: 30,
+    marginBottom: 4,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    backgroundColor: '#18181b',
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+  },
 
   attachmentPreview: {
     flexDirection: 'row',
@@ -647,15 +720,23 @@ const styles = StyleSheet.create({
   attachmentRemoveBtn: { padding: 4 },
 
   // Input
+  chatComposer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#000000',
+    borderTopWidth: 1,
+    borderTopColor: '#27272a',
+  },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    backgroundColor: '#000000',
-    borderTopWidth: 1,
-    borderTopColor: '#27272a',
+    backgroundColor: 'transparent',
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingTop: 10,
+    paddingBottom: 12,
   },
   attachBtn: {
     width: 44,

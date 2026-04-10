@@ -191,6 +191,24 @@ export function ChatView({ conversationId, orgId, currentUser, onBack }: ChatVie
     }
   }
 
+  const handleDeleteMessage = async (message: Message) => {
+    if (!message?.id) return
+    const confirmed = window.confirm('Delete this message? This cannot be undone.')
+    if (!confirmed) return
+
+    try {
+      await api.delete(`/organizations/${orgId}/dm/conversations/${conversationId}/messages/${message.id}`)
+      setMessages((prev) => prev.filter((m) => m.id !== message.id))
+      if (editingMessage?.id === message.id) {
+        setEditingMessage(null)
+        setNewMessage('')
+      }
+      setMessageActionsId(null)
+    } catch {
+      window.alert('Failed to delete message. Please try again.')
+    }
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800 bg-black shrink-0">
@@ -251,6 +269,7 @@ export function ChatView({ conversationId, orgId, currentUser, onBack }: ChatVie
                       message={msg}
                       isOwn={msg.sender_id === currentUser?.id}
                       canEdit={msg.sender_id === currentUser?.id}
+                      canDelete={msg.sender_id === currentUser?.id}
                       showActions={messageActionsId === msg.id}
                       onLongPressActivate={() => setMessageActionsId(msg.id)}
                       onEdit={(m) => {
@@ -259,6 +278,11 @@ export function ChatView({ conversationId, orgId, currentUser, onBack }: ChatVie
                         setNewMessage(m.text || '')
                         setSelectedImageDataUrl(null)
                         setSelectedImageName(null)
+                      }}
+                      onDelete={handleDeleteMessage}
+                      onOpenActions={(messageId) => {
+                        setEmojiPickerMessageId(null)
+                        setMessageActionsId((prev) => (prev === messageId ? null : messageId))
                       }}
                       onToggleReaction={toggleReaction}
                       onOpenEmojiPicker={(messageId) => {

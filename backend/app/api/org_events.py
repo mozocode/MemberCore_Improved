@@ -109,6 +109,27 @@ def _post_event_to_chat(db, org_id: str, user_id: str, event: dict, is_update: b
     return channel_id, msg_doc
 
 
+def _delete_event_messages_from_chat(db, org_id: str, event_id: str) -> int:
+    """Delete auto-posted event messages in org chat for a deleted event."""
+    docs = list(
+        db.collection("messages")
+        .where("event_id", "==", event_id)
+        .stream()
+    )
+    deleted = 0
+    for doc in docs:
+        data = doc.to_dict() or {}
+        if data.get("organization_id") != org_id:
+            continue
+        try:
+            doc.reference.delete()
+            deleted += 1
+        except Exception:
+            # Best effort cleanup; event deletion should still proceed.
+            pass
+    return deleted
+
+
 def _require_org_member(db, org_id: str, user_id: str) -> str:
     members = (
         db.collection("members")
@@ -967,7 +988,13 @@ def delete_event(
             detail="Only admins or the event creator can delete this event",
         )
 
+    # Remove event document and related auto-posted chat message cards.
     ref.delete()
+    try:
+        _delete_event_messages_from_chat(db, org_id, event_id)
+    except Exception:
+        # Best effort cleanup; primary delete already succeeded.
+        pass
     return {"ok": True}
 
 

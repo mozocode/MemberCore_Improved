@@ -26,7 +26,10 @@ interface MessageBubbleProps {
   message: Message
   isOwn: boolean
   canEdit?: boolean
+  canDelete?: boolean
   onEdit?: (message: Message) => void
+  onDelete?: (message: Message) => void
+  onOpenActions?: (messageId: string) => void
   onToggleReaction?: (messageId: string, emoji: string) => void
   onOpenEmojiPicker?: (messageId: string) => void
   /** True after user long-presses this bubble (edit + quick reactions visible). */
@@ -38,7 +41,10 @@ export function MessageBubble({
   message,
   isOwn,
   canEdit = false,
+  canDelete = false,
   onEdit,
+  onDelete,
+  onOpenActions,
   onToggleReaction,
   onOpenEmojiPicker,
   showActions = false,
@@ -60,44 +66,68 @@ export function MessageBubble({
 
   return (
     <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`
-          max-w-[75%] md:max-w-[60%] px-4 py-2.5 rounded-2xl touch-manipulation
-          ${isOwn
-            ? 'bg-blue-600 text-white rounded-br-md'
-            : 'bg-zinc-800 text-white rounded-bl-md'}
-        `}
-        onContextMenu={(e) => e.preventDefault()}
-        onPointerDown={(e) => {
-          if (e.button !== 0) return
-          if ((e.target as HTMLElement).closest('button, a[href]')) return
-          pointerStart.current = { x: e.clientX, y: e.clientY }
-          cancelLongPressTimer()
-          longPressTimer.current = setTimeout(() => {
-            longPressTimer.current = null
-            onLongPressActivate?.()
-          }, LONG_PRESS_MS)
-        }}
-        onPointerMove={(e) => {
-          if (!pointerStart.current || !longPressTimer.current) return
-          const dx = e.clientX - pointerStart.current.x
-          const dy = e.clientY - pointerStart.current.y
-          if (dx * dx + dy * dy > MOVE_THRESHOLD_PX * MOVE_THRESHOLD_PX) {
-            cancelLongPressTimer()
-          }
-        }}
-        onPointerUp={cancelLongPressTimer}
-        onPointerCancel={cancelLongPressTimer}
-        data-message-bubble-id={message.id}
-      >
-        {showActions && canEdit && onEdit && (
+      <div className="relative max-w-[75%] md:max-w-[60%]">
+        {isOwn && (canEdit || canDelete) && onOpenActions && (
           <button
             type="button"
-            onClick={() => onEdit(message)}
-            className={`text-[11px] mb-1 underline ${isOwn ? 'text-blue-200' : 'text-zinc-400'}`}
+            onClick={() => onOpenActions(message.id)}
+            className="hidden md:flex absolute -left-9 top-1 h-7 w-7 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:text-white hover:border-zinc-500"
+            aria-label="Message actions"
           >
-            Edit
+            ...
           </button>
+        )}
+        <div
+          className={`
+            px-4 py-2.5 rounded-2xl touch-manipulation
+            ${isOwn
+              ? 'bg-blue-600 text-white rounded-br-md'
+              : 'bg-zinc-800 text-white rounded-bl-md'}
+          `}
+          onContextMenu={(e) => e.preventDefault()}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return
+            if ((e.target as HTMLElement).closest('button, a[href]')) return
+            pointerStart.current = { x: e.clientX, y: e.clientY }
+            cancelLongPressTimer()
+            longPressTimer.current = setTimeout(() => {
+              longPressTimer.current = null
+              onLongPressActivate?.()
+            }, LONG_PRESS_MS)
+          }}
+          onPointerMove={(e) => {
+            if (!pointerStart.current || !longPressTimer.current) return
+            const dx = e.clientX - pointerStart.current.x
+            const dy = e.clientY - pointerStart.current.y
+            if (dx * dx + dy * dy > MOVE_THRESHOLD_PX * MOVE_THRESHOLD_PX) {
+              cancelLongPressTimer()
+            }
+          }}
+          onPointerUp={cancelLongPressTimer}
+          onPointerCancel={cancelLongPressTimer}
+          data-message-bubble-id={message.id}
+        >
+        {showActions && (
+          <div className="mb-1 flex items-center gap-3">
+            {canEdit && onEdit && (
+              <button
+                type="button"
+                onClick={() => onEdit(message)}
+                className={`text-[11px] underline ${isOwn ? 'text-blue-200' : 'text-zinc-400'}`}
+              >
+                Edit
+              </button>
+            )}
+            {canDelete && onDelete && (
+              <button
+                type="button"
+                onClick={() => onDelete(message)}
+                className={`text-[11px] underline ${isOwn ? 'text-red-200' : 'text-red-400'}`}
+              >
+                Delete
+              </button>
+            )}
+          </div>
         )}
         {message.image_data_url && (
           <img
@@ -176,6 +206,7 @@ export function MessageBubble({
               +
             </button>
           )}
+        </div>
         </div>
       </div>
     </div>

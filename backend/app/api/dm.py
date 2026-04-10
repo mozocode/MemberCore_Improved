@@ -418,6 +418,72 @@ class ToggleReactionRequest(BaseModel):
     emoji: str
 
 
+@router.delete("/{org_id}/dm/conversations/{conv_id}/messages/{msg_id}")
+def delete_message(
+    org_id: str,
+    conv_id: str,
+    msg_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Delete a DM message. Only sender may delete."""
+    db = get_firestore()
+    _require_org_member(db, org_id, user_id)
+
+    conv_ref = db.collection("dm_conversations").document(conv_id)
+    conv_doc = conv_ref.get()
+    if not conv_doc.exists or conv_doc.to_dict().get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    conv_data = conv_doc.to_dict() or {}
+    if user_id not in (conv_data.get("participants") or []):
+        raise HTTPException(status_code=403, detail="Not a participant")
+
+    latest_before_docs = list(
+        conv_ref.collection("messages")
+        .order_by("sent_at", direction="DESCENDING")
+        .limit(1)
+        .stream()
+    )
+    latest_before_id = latest_before_docs[0].id if latest_before_docs else None
+
+    msg_ref = conv_ref.collection("messages").document(msg_id)
+    msg_doc = msg_ref.get()
+    if not msg_doc.exists:
+        raise HTTPException(status_code=404, detail="Message not found")
+    msg = msg_doc.to_dict() or {}
+    if msg.get("sender_id") != user_id:
+        raise HTTPException(status_code=403, detail="You can only delete your own messages")
+
+    msg_ref.delete()
+
+    # Keep conversation preview metadata in sync when latest message is deleted.
+    if latest_before_id == msg_id:
+        latest_after_docs = list(
+            conv_ref.collection("messages")
+            .order_by("sent_at", direction="DESCENDING")
+            .limit(1)
+            .stream()
+        )
+        if latest_after_docs:
+            latest_after = latest_after_docs[0].to_dict() or {}
+            latest_text = (latest_after.get("text") or "").strip() or "📷 Image"
+            latest_sent_at = latest_after.get("sent_at")
+            conv_ref.update({
+                "last_message": {
+                    "text": latest_text,
+                    "sender_id": latest_after.get("sender_id"),
+                    "sent_at": latest_sent_at,
+                },
+                "updated_at": latest_sent_at or datetime.now(timezone.utc),
+            })
+        else:
+            conv_ref.update({
+                "last_message": None,
+                "updated_at": datetime.now(timezone.utc),
+            })
+
+    return {"ok": True, "id": msg_id}
+
+
 @router.post("/{org_id}/dm/conversations/{conv_id}/messages")
 def send_message(
     org_id: str,
