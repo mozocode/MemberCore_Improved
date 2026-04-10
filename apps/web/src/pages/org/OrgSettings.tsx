@@ -117,6 +117,14 @@ function isOrgBillingActive(org: {
   return trialEnd !== null && trialEnd.getTime() > Date.now()
 }
 
+function publishPendingApprovalsCount(orgId: string, count: number) {
+  window.dispatchEvent(
+    new CustomEvent('orgPendingApprovalsChanged', {
+      detail: { orgId, count },
+    }),
+  )
+}
+
 export function OrgSettings() {
   const { orgId } = useParams<{ orgId: string }>()
   const navigate = useNavigate()
@@ -145,10 +153,34 @@ export function OrgSettings() {
 
   useEffect(() => {
     if (!orgId) return
-    api
-      .get(`/organizations/${orgId}/members`, { params: { status_filter: 'pending' } })
-      .then((r) => setPendingCount(Array.isArray(r.data) ? r.data.length : 0))
-      .catch(() => setPendingCount(0))
+    let cancelled = false
+    const fetchPendingCount = () => {
+      api
+        .get(`/organizations/${orgId}/members`, { params: { status_filter: 'pending' } })
+        .then((r) => {
+          if (cancelled) return
+          const count = Array.isArray(r.data) ? r.data.length : 0
+          setPendingCount(count)
+        })
+        .catch(() => {
+          if (!cancelled) setPendingCount(0)
+        })
+    }
+    const handlePendingChanged = (e: Event) => {
+      const evt = e as CustomEvent<{ orgId: string; count: number }>
+      if (evt.detail?.orgId === orgId) {
+        setPendingCount(Math.max(0, Number(evt.detail.count) || 0))
+      }
+    }
+
+    fetchPendingCount()
+    const interval = setInterval(fetchPendingCount, 30000)
+    window.addEventListener('orgPendingApprovalsChanged', handlePendingChanged as EventListener)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      window.removeEventListener('orgPendingApprovalsChanged', handlePendingChanged as EventListener)
+    }
   }, [orgId])
 
   const location = useLocation()
@@ -3683,9 +3715,15 @@ function SettingsMembers({ orgId }: { orgId: string }) {
     setLoading(true)
     try {
       const { data } = await api.get(`/organizations/${orgId}/members`)
-      setAllMembers(Array.isArray(data) ? data : [])
+      const members = Array.isArray(data) ? data : []
+      setAllMembers(members)
+      publishPendingApprovalsCount(
+        orgId,
+        members.filter((m) => m.status === 'pending').length,
+      )
     } catch {
       setAllMembers([])
+      publishPendingApprovalsCount(orgId, 0)
     } finally {
       setLoading(false)
     }

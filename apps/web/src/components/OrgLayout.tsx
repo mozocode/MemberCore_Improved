@@ -186,9 +186,17 @@ export function OrgLayout() {
     }
     fetchPendingApprovals()
     const interval = setInterval(fetchPendingApprovals, 30000)
+    const handlePendingChanged = (e: Event) => {
+      const evt = e as CustomEvent<{ orgId: string; count: number }>
+      if (evt.detail?.orgId === orgId) {
+        setPendingApprovalsCount(Math.max(0, Number(evt.detail.count) || 0))
+      }
+    }
+    window.addEventListener('orgPendingApprovalsChanged', handlePendingChanged as EventListener)
     return () => {
       cancelled = true
       clearInterval(interval)
+      window.removeEventListener('orgPendingApprovalsChanged', handlePendingChanged as EventListener)
     }
   }, [orgId, role])
 
