@@ -111,13 +111,23 @@ def _post_event_to_chat(db, org_id: str, user_id: str, event: dict, is_update: b
 
 def _delete_event_messages_from_chat(db, org_id: str, event_id: str) -> int:
     """Delete auto-posted event messages in org chat for a deleted event."""
-    docs = list(
+    by_event_id = list(
         db.collection("messages")
         .where("event_id", "==", event_id)
         .stream()
     )
+    # Backward compatibility: some event cards may only have nested event_data.id.
+    by_event_data_id = list(
+        db.collection("messages")
+        .where("event_data.id", "==", event_id)
+        .stream()
+    )
+    docs_by_id = {doc.id: doc for doc in by_event_id}
+    for doc in by_event_data_id:
+        docs_by_id[doc.id] = doc
+
     deleted = 0
-    for doc in docs:
+    for doc in docs_by_id.values():
         data = doc.to_dict() or {}
         if data.get("organization_id") != org_id:
             continue

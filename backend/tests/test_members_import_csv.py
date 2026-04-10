@@ -187,7 +187,7 @@ def test_import_csv_endpoint_success(mock_get_firestore):
 
 
 @patch("app.api.members.get_firestore")
-def test_import_csv_skips_existing_platform_user(mock_get_firestore):
+def test_import_csv_imports_existing_platform_user(mock_get_firestore):
     mock_get_firestore.return_value = _make_mock_firestore_with_existing_user()
     from app.core.security import get_current_user
     app.dependency_overrides[get_current_user] = lambda: {"id": "user-admin-1"}
@@ -201,9 +201,8 @@ def test_import_csv_skips_existing_platform_user(mock_get_firestore):
         )
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["imported_count"] == 0
-        assert data["skipped_count"] >= 1
-        assert any("already exists on membercore" in (r.get("error_message", "").lower()) for r in data.get("rows", []))
+        assert data["imported_count"] == 1
+        assert data["skipped_count"] == 0
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 

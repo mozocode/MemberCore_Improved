@@ -568,8 +568,25 @@ def list_messages(
     docs = list(query.stream())
     messages = []
     sender_ids_missing_avatar = set()
+    event_exists_cache: dict[str, bool] = {}
+    stale_event_message_refs = []
     for d in docs:
         m = d.to_dict()
+        if m.get("type") == "event":
+            event_payload = m.get("event_data") or {}
+            linked_event_id = m.get("event_id") or event_payload.get("id")
+            if linked_event_id:
+                exists = event_exists_cache.get(linked_event_id)
+                if exists is None:
+                    event_doc = db.collection("events").document(linked_event_id).get()
+                    exists = bool(
+                        event_doc.exists
+                        and (event_doc.to_dict() or {}).get("organization_id") == org_id
+                    )
+                    event_exists_cache[linked_event_id] = exists
+                if not exists:
+                    stale_event_message_refs.append(d.reference)
+                    continue
         m["id"] = d.id
         created = m.get("created_at")
         if hasattr(created, "isoformat"):
@@ -580,6 +597,13 @@ def list_messages(
         if not m.get("sender_avatar") and m.get("sender_id"):
             sender_ids_missing_avatar.add(m["sender_id"])
         messages.append(m)
+
+    if stale_event_message_refs:
+        for ref in stale_event_message_refs:
+            try:
+                ref.delete()
+            except Exception:
+                pass
 
     if sender_ids_missing_avatar:
         users_ref = db.collection("users")

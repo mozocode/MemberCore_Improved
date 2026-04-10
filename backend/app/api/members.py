@@ -349,8 +349,15 @@ async def import_members_csv(
     send_invites: bool = Form(False),
     user: dict = Depends(get_current_user),
 ):
-    """Import members from CSV. Creates users if needed and adds them as pending members. If send_invites=True, also creates invite records and sends invite emails. Admin/owner only."""
+    """Import members from CSV.
+
+    Behavior:
+    - Ensures each listed email is a member of the org
+    - Auto-approves imported members
+    - Sends invite/onboarding notification for each imported row
+    """
     db = get_firestore()
+    _ = send_invites  # deprecated input; import now always sends onboarding notices.
     my_role = _require_org_member(db, org_id, user["id"])
     _require_admin_or_owner(my_role)
 
@@ -407,15 +414,7 @@ async def import_members_csv(
         existing_users = list(users_ref.where("email", "==", email).limit(1).get())
 
         if existing_users:
-            # Do not overwrite or auto-import rows for users that already exist on platform.
-            result_rows.append({
-                "row_index": row_index,
-                "email": email,
-                "status": "duplicate",
-                "error_message": "Email already exists on MemberCore",
-            })
-            skipped_count += 1
-            continue
+            user_id = existing_users[0].id
         else:
             user_id = generate_uuid()
             name = f"{parsed['first_name']} {parsed['last_name']}".strip() or email
@@ -444,48 +443,65 @@ async def import_members_csv(
             .get()
         )
         if existing_members:
-            result_rows.append({
-                "row_index": row_index,
-                "email": email,
-                "status": "duplicate",
-                "error_message": "Already a member",
-            })
-            skipped_count += 1
-            continue
+            member_doc = existing_members[0]
+            member_id = member_doc.id
+            now = datetime.now(timezone.utc)
+            member_data = member_doc.to_dict() or {}
+            updates = {
+                "status": "approved",
+                "approved_at": now,
+                "approved_by": user["id"],
+                "updated_at": now,
+            }
+            # Keep privileged roles unchanged; otherwise allow CSV role updates.
+            if member_data.get("role") not in ("owner", "admin"):
+                updates["role"] = parsed["role"]
+            if parsed.get("title"):
+                updates["title"] = parsed.get("title")
+            if parsed.get("nickname"):
+                updates["nickname"] = parsed.get("nickname")
+            db.collection("members").document(member_id).update(updates)
+            row_status = "approved"
+        else:
+            member_id = generate_uuid()
+            now = datetime.now(timezone.utc)
+            member_data = {
+                "id": member_id,
+                "user_id": user_id,
+                "organization_id": org_id,
+                "role": parsed["role"],
+                "status": "approved",
+                "title": parsed.get("title"),
+                "nickname": parsed.get("nickname"),
+                "role_label": None,
+                "allowed_channels": [],
+                "joined_at": now,
+                "approved_at": now,
+                "approved_by": user["id"],
+                "updated_at": now,
+            }
+            db.collection("members").document(member_id).set(member_data)
+            row_status = "imported"
 
-        member_id = generate_uuid()
-        now = datetime.now(timezone.utc)
-        member_data = {
-            "id": member_id,
-            "user_id": user_id,
-            "organization_id": org_id,
-            "role": parsed["role"],
-            "status": "pending",
-            "title": parsed.get("title"),
-            "nickname": parsed.get("nickname"),
-            "role_label": None,
-            "allowed_channels": [],
-            "joined_at": now,
-        }
-        db.collection("members").document(member_id).set(member_data)
-        result_rows.append({"row_index": row_index, "email": email, "status": "imported"})
+        result_rows.append({"row_index": row_index, "email": email, "status": row_status})
         imported_count += 1
 
-        if send_invites:
-            from app.api.member_invites import create_invite_and_send
-            invite_id = create_invite_and_send(
-                db,
-                org_id=org_id,
-                org_name=org_name,
-                admin_name=admin_name,
-                email=email,
-                first_name=parsed.get("first_name"),
-                last_name=parsed.get("last_name"),
-                role=parsed["role"],
-                member_id=member_id,
-            )
-            if invite_id:
-                invites_sent_count += 1
+        # Always attempt invite/onboarding notice so recipients can create password
+        # or sign in when they already have a MemberCore account.
+        from app.api.member_invites import create_invite_and_send
+        invite_id = create_invite_and_send(
+            db,
+            org_id=org_id,
+            org_name=org_name,
+            admin_name=admin_name,
+            email=email,
+            first_name=parsed.get("first_name"),
+            last_name=parsed.get("last_name"),
+            role=parsed["role"],
+            member_id=member_id,
+        )
+        if invite_id:
+            invites_sent_count += 1
 
     return {
         "imported_count": imported_count,
