@@ -273,7 +273,7 @@ export function OrgLayout() {
   const showTrialExitModal = isOwnerOrAdmin && trialExpiredNoPro && !trialExitCaptured && !showSignupModal
 
   return (
-    <div className="h-[100dvh] lg:h-screen w-full max-w-[100vw] overflow-hidden bg-black text-white flex touch-pan-y">
+    <div className="h-[100dvh] lg:h-screen w-full max-w-full overflow-hidden bg-black text-white flex touch-pan-y">
       {user && orgId && (
         <>
           <SignupFeedbackModal
