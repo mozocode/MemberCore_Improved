@@ -28,7 +28,7 @@ export function ConversationItem({ conversation, currentUserId, isActive, onClic
       type="button"
       onClick={onClick}
       className={`
-        w-full flex items-center gap-3 p-4 text-left min-h-[44px]
+        w-full max-w-full min-w-0 flex items-center gap-3 p-4 text-left min-h-[44px] overflow-hidden
         border-b border-zinc-800/50 transition-colors
         ${isActive ? 'bg-zinc-800' : 'hover:bg-zinc-900'}
       `}

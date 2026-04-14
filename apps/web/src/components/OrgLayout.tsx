@@ -362,7 +362,7 @@ export function OrgLayout() {
           {isChatPage ? (
             <Outlet />
           ) : (
-            <div className="p-4 md:p-6 lg:p-8">
+            <div className="p-4 md:p-6 lg:p-8 min-w-0 max-w-full overflow-x-hidden">
               <Outlet />
             </div>
           )}

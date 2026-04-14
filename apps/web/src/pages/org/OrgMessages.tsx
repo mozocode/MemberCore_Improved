@@ -82,14 +82,14 @@ export function OrgMessages() {
   if (!user) return null
 
   return (
-    <div className="flex h-full min-h-0 w-full max-w-full overflow-hidden">
+    <div className="flex h-full min-h-0 w-full min-w-0 max-w-full overflow-hidden">
       {/* Portal the + button into the mobile layout header */}
       {mobileHeaderTarget && createPortal(newMessageButton, mobileHeaderTarget)}
 
       {/* Conversation list */}
       <div
         className={`
-          w-full lg:w-96 border-r border-zinc-800 bg-black flex flex-col shrink-0 min-h-0 overflow-hidden
+          w-full lg:w-96 border-r border-zinc-800 bg-black flex flex-col shrink-0 min-h-0 min-w-0 max-w-full overflow-hidden
           ${activeConversationId ? 'hidden lg:flex' : 'flex'}
         `}
       >
@@ -113,7 +113,7 @@ export function OrgMessages() {
       {/* Chat view */}
       <div
         className={`
-          flex-1 flex flex-col bg-zinc-950 min-w-0 min-h-0 overflow-hidden
+          flex-1 flex flex-col bg-zinc-950 min-w-0 min-h-0 max-w-full overflow-hidden
           ${activeConversationId ? 'flex' : 'hidden lg:flex'}
         `}
       >

@@ -21,7 +21,7 @@ export function ConversationList({ conversations, activeId, currentUserId, onSel
   }
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 min-w-0 max-w-full overflow-y-auto overflow-x-hidden">
       {conversations.map((conv) => (
         <ConversationItem
           key={conv.id}

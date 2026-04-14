@@ -263,11 +263,13 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <ToastProvider>
-      <AuthProvider>
-        <ScrollToTop />
-        <AppRoutes />
-      </AuthProvider>
-    </ToastProvider>
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-black">
+      <ToastProvider>
+        <AuthProvider>
+          <ScrollToTop />
+          <AppRoutes />
+        </AuthProvider>
+      </ToastProvider>
+    </div>
   )
 }
