@@ -354,3 +354,161 @@ def test_billing_state_refreshes_missing_connect_timestamp(monkeypatch):
     org = db.collection("organizations").document(org_id).get().to_dict()
     assert org["stripe_connect_charges_enabled"] is True
     assert org["stripe_connect_payouts_enabled"] is True
+
+
+def _install_fake_stripe_connect_event(monkeypatch, event, *, account_obj=None):
+    class _SigErr(Exception):
+        pass
+
+    class _Webhook:
+        @staticmethod
+        def construct_event(payload, sig_header, secret):  # noqa: ARG004
+            return event
+
+    fake_module = types.SimpleNamespace()
+    fake_module.SignatureVerificationError = _SigErr
+    fake_module.Webhook = _Webhook
+    fake_module.api_key = ""
+
+    class _AccountApi:
+        @staticmethod
+        def retrieve(account_id):  # noqa: ARG004
+            return account_obj
+
+    fake_module.Account = _AccountApi
+    monkeypatch.setitem(sys.modules, "stripe", fake_module)
+
+
+def test_connect_webhook_syncs_capability_updates(monkeypatch):
+    db = _FakeDB()
+    monkeypatch.setattr(billing_api, "get_firestore", lambda: db)
+    monkeypatch.setenv("STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_test")
+    org_id = "org-cap-1"
+    acct_id = "acct_cap_1"
+
+    db.collection("organizations").document(org_id).set(
+        {
+            "id": org_id,
+            "name": "Cap Org",
+            "stripe_connected_account_id": acct_id,
+            "stripe_connect_charges_enabled": False,
+            "stripe_connect_payouts_enabled": False,
+        }
+    )
+
+    event = {
+        "id": "evt_cap_1",
+        "type": "capability.updated",
+        "data": {"object": {"id": "ca_123", "account": acct_id, "status": "active"}},
+    }
+
+    class _Account:
+        id = acct_id
+        details_submitted = True
+        charges_enabled = True
+        payouts_enabled = True
+        capabilities = {"card_payments": "active", "transfers": "active"}
+        requirements = {"currently_due": []}
+
+        def to_dict(self):
+            return {
+                "id": self.id,
+                "details_submitted": self.details_submitted,
+                "charges_enabled": self.charges_enabled,
+                "payouts_enabled": self.payouts_enabled,
+                "capabilities": self.capabilities,
+                "requirements": self.requirements,
+            }
+
+    _install_fake_stripe_connect_event(monkeypatch, event, account_obj=_Account())
+    body = json.dumps(event).encode("utf-8")
+
+    async def _receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/billing/webhook/connect",
+        "headers": [(b"stripe-signature", b"valid")],
+    }
+    result = asyncio.run(billing_api.stripe_connect_webhook(Request(scope, _receive)))
+    assert result == {"status": "ok"}
+
+    org = db.collection("organizations").document(org_id).get().to_dict()
+    assert org["stripe_connect_charges_enabled"] is True
+    assert org["stripe_connect_payouts_enabled"] is True
+    assert org["stripe_connect_capabilities"]["card_payments"] == "active"
+
+
+def test_connect_webhook_records_latest_payout_event(monkeypatch):
+    db = _FakeDB()
+    monkeypatch.setattr(billing_api, "get_firestore", lambda: db)
+    monkeypatch.setenv("STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_test")
+    org_id = "org-payout-1"
+    acct_id = "acct_pay_1"
+
+    db.collection("organizations").document(org_id).set(
+        {
+            "id": org_id,
+            "name": "Payout Org",
+            "stripe_connected_account_id": acct_id,
+            "stripe_connect_charges_enabled": True,
+            "stripe_connect_payouts_enabled": True,
+        }
+    )
+
+    event = {
+        "id": "evt_pay_1",
+        "type": "payout.paid",
+        "account": acct_id,
+        "data": {
+            "object": {
+                "id": "po_123",
+                "amount": 12500,
+                "currency": "usd",
+                "status": "paid",
+                "arrival_date": int(datetime.now(timezone.utc).timestamp()),
+            }
+        },
+    }
+
+    class _Account:
+        id = acct_id
+        details_submitted = True
+        charges_enabled = True
+        payouts_enabled = True
+        capabilities = {"card_payments": "active", "transfers": "active"}
+        requirements = {"currently_due": []}
+
+        def to_dict(self):
+            return {
+                "id": self.id,
+                "details_submitted": self.details_submitted,
+                "charges_enabled": self.charges_enabled,
+                "payouts_enabled": self.payouts_enabled,
+                "capabilities": self.capabilities,
+                "requirements": self.requirements,
+            }
+
+    _install_fake_stripe_connect_event(monkeypatch, event, account_obj=_Account())
+    body = json.dumps(event).encode("utf-8")
+
+    async def _receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/billing/webhook/connect",
+        "headers": [(b"stripe-signature", b"valid")],
+    }
+    result = asyncio.run(billing_api.stripe_connect_webhook(Request(scope, _receive)))
+    assert result == {"status": "ok"}
+
+    org = db.collection("organizations").document(org_id).get().to_dict()
+    assert org["stripe_connect_last_payout_id"] == "po_123"
+    assert org["stripe_connect_last_payout_status"] == "paid"
+    assert org["stripe_connect_last_payout_amount_cents"] == 12500
+    assert org["stripe_connect_last_payout_currency"] == "usd"
+    assert org["stripe_connect_last_payout_event_type"] == "payout.paid"

@@ -406,13 +406,74 @@ class ConnectLoginLinkRequest(BaseModel):
     redirect_url: Optional[str] = None
 
 
+def _to_plain_dict(value) -> dict:
+    """Best-effort conversion of Stripe objects to plain dicts."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    for attr in ("to_dict_recursive", "to_dict"):
+        fn = getattr(value, attr, None)
+        if callable(fn):
+            try:
+                out = fn()
+                if isinstance(out, dict):
+                    return out
+            except Exception:
+                pass
+    return {}
+
+
+def _account_bool(account, account_dict: dict, field: str) -> bool:
+    """Read boolean from Stripe account object/dict."""
+    if hasattr(account, field):
+        return bool(getattr(account, field))
+    return bool(account_dict.get(field))
+
+
+def _upsert_connect_payout_status(db, org_id: str, payout: dict, event_type: str) -> dict:
+    """Persist latest Connect payout snapshot on organization for visibility/debugging."""
+    now = datetime.now(timezone.utc)
+    arrival_epoch = payout.get("arrival_date")
+    arrival_at = None
+    if isinstance(arrival_epoch, (int, float)):
+        try:
+            arrival_at = datetime.fromtimestamp(arrival_epoch, tz=timezone.utc)
+        except Exception:
+            arrival_at = None
+
+    data = {
+        "stripe_connect_last_payout_id": payout.get("id"),
+        "stripe_connect_last_payout_status": payout.get("status"),
+        "stripe_connect_last_payout_amount_cents": payout.get("amount"),
+        "stripe_connect_last_payout_currency": (payout.get("currency") or "").lower() or None,
+        "stripe_connect_last_payout_arrival_at": arrival_at,
+        "stripe_connect_last_payout_event_type": event_type,
+        "stripe_connect_last_payout_updated_at": now,
+    }
+    db.collection("organizations").document(org_id).update(data)
+    return data
+
+
 def _upsert_connect_state(db, org_id: str, account) -> dict:
     """Persist Stripe Connect account status fields on the organization."""
+    account_dict = _to_plain_dict(account)
+    account_id = (
+        getattr(account, "id", None)
+        or account_dict.get("id")
+        or (account.get("id") if hasattr(account, "get") else None)
+    )
+    if not account_id:
+        raise ValueError("Missing Stripe account id while syncing connect state")
+    capabilities = _to_plain_dict(account_dict.get("capabilities"))
+    requirements = _to_plain_dict(account_dict.get("requirements"))
     data = {
-        "stripe_connected_account_id": account.id,
-        "stripe_connect_onboarded": bool(getattr(account, "details_submitted", False)),
-        "stripe_connect_charges_enabled": bool(getattr(account, "charges_enabled", False)),
-        "stripe_connect_payouts_enabled": bool(getattr(account, "payouts_enabled", False)),
+        "stripe_connected_account_id": account_id,
+        "stripe_connect_onboarded": _account_bool(account, account_dict, "details_submitted"),
+        "stripe_connect_charges_enabled": _account_bool(account, account_dict, "charges_enabled"),
+        "stripe_connect_payouts_enabled": _account_bool(account, account_dict, "payouts_enabled"),
+        "stripe_connect_capabilities": capabilities,
+        "stripe_connect_requirements": requirements,
         "stripe_connect_updated_at": datetime.now(timezone.utc),
     }
     db.collection("organizations").document(org_id).update(data)
@@ -863,7 +924,7 @@ async def stripe_subscription_webhook(request: Request):
 
 @router.post("/webhook/connect")
 async def stripe_connect_webhook(request: Request):
-    """Handle Stripe Connect account capability updates (account.updated)."""
+    """Handle Stripe Connect lifecycle events for org connected accounts."""
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
     webhook_secret = os.getenv("STRIPE_CONNECT_WEBHOOK_SECRET")
@@ -883,12 +944,28 @@ async def stripe_connect_webhook(request: Request):
         return JSONResponse(content={"detail": "Invalid signature"}, status_code=400)
 
     event_type = event.get("type")
-    if event_type != "account.updated":
+    supported_events = {
+        "account.updated",
+        "capability.updated",
+        "payout.created",
+        "payout.updated",
+        "payout.paid",
+        "payout.failed",
+        "payout.canceled",
+    }
+    if event_type not in supported_events:
         logger.info("stripe_connect_webhook_ignored event_type=%s", event_type)
         return {"status": "ok"}
 
-    account = event["data"]["object"]
-    account_id = account.get("id")
+    obj = event["data"]["object"]
+    account_id = event.get("account")
+    if not account_id and isinstance(obj, dict):
+        if event_type.startswith("account.") and obj.get("id"):
+            account_id = obj.get("id")
+        elif event_type.startswith("capability."):
+            account_id = obj.get("account")
+        elif event_type.startswith("payout."):
+            account_id = obj.get("account")
     if not account_id:
         logger.warning("stripe_connect_webhook_missing_account_id event_type=%s", event_type)
         return {"status": "ok"}
@@ -903,7 +980,26 @@ async def stripe_connect_webhook(request: Request):
         )
         return {"status": "ok"}
 
-    _upsert_connect_state(db, org_id, account)
+    if event_type.startswith("payout."):
+        _upsert_connect_payout_status(db, org_id, obj, event_type)
+        # Keep capability flags fresh for payout/transfer gating.
+        try:
+            account = stripe.Account.retrieve(account_id)
+            _upsert_connect_state(db, org_id, account)
+        except Exception as e:
+            logger.warning(
+                "stripe_connect_webhook_payout_account_refresh_failed event_type=%s org_id=%s account_id=%s err=%s",
+                event_type,
+                org_id,
+                account_id,
+                e,
+            )
+    elif event_type.startswith("capability."):
+        # Capability events can indicate pending/active changes for payments/transfers.
+        account = stripe.Account.retrieve(account_id)
+        _upsert_connect_state(db, org_id, account)
+    else:
+        _upsert_connect_state(db, org_id, obj)
     logger.info(
         "stripe_connect_webhook_synced event_type=%s org_id=%s account_id=%s",
         event_type,

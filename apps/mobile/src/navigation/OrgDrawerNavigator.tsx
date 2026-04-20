@@ -65,10 +65,19 @@ export function OrgDrawerNavigator({ route, navigation }: Props) {
         initialRouteName="Chat"
         screenOptions={{
           headerShown: true,
+          // Keep header pinned; never collapse/hide while content scrolls.
+          headerHideOnScroll: false,
+          headerTransparent: false,
+          headerLargeTitle: false,
           headerStyle: {
             backgroundColor: '#000000',
             borderBottomWidth: 1,
             borderBottomColor: '#27272a',
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.35,
+            shadowRadius: 6,
+            elevation: 10,
             height: 96,
           },
           headerTitleStyle: {
